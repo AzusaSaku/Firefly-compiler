@@ -6,6 +6,10 @@
 #include <memory>
 #include <functional>
 #include <utility>
+#include <vector>
+#include <string>
+#include <map>
+#include <stdexcept>
 #include "lexer.hpp"
 #include "ast.hpp"
 
@@ -45,7 +49,7 @@ public:
     Lexer *l;
     Token cur_token;
     Token peek_token;
-//    vector<string> errors;
+    vector<string> errors;
 
     map<TokenType, function<Expression*()>> prefix_parse_fns;
     map<TokenType, function<Expression*(Expression&)>> infix_parse_fns;
@@ -120,10 +124,14 @@ public:
     Expression *parse_expression(Precedence precedence) {
         auto prefix = prefix_parse_fns[cur_token.type];
         if (!prefix) {
+            no_prefix_parse_fn_error(cur_token.type);
             return nullptr;
         }
 
         auto left_exp = prefix();
+        if (left_exp == nullptr) {
+            return nullptr;
+        }
 
         while (!peek_token_is(TokenType::SEMICOLON) && precedence < peek_precedence()) {
             auto infix = infix_parse_fns[peek_token.type];
@@ -378,7 +386,14 @@ public:
 
         stmt->value = parse_expression(Precedence::LOWEST);
 
-        if (!expect_peek(TokenType::SEMICOLON)) {
+        if (cur_token_is(TokenType::SEMICOLON)) {
+            return stmt;
+        }
+
+        if (!peek_token_is(TokenType::SEMICOLON)) {
+            peek_error(TokenType::SEMICOLON);
+            parser_next_token();
+        } else {
             parser_next_token();
         }
 
@@ -394,7 +409,7 @@ public:
 
         stmt->return_value = parse_expression(Precedence::LOWEST);
 
-        while (!cur_token_is(TokenType::SEMICOLON)) {
+        while (!cur_token_is(TokenType::SEMICOLON) && !cur_token_is(TokenType::END)) {
             parser_next_token();
         }
 
@@ -409,17 +424,22 @@ public:
         return peek_token.type == type;
     }
 
-//    void peek_error(TokenType type) {
-//        string msg = "expected next token to be " + magic_enum::enum_name(type) + ", got " + magic_enum::enum_name(peek_token.type) + " instead";
-//        errors.push_back(msg);
-//    }
+    void peek_error(TokenType type) {
+        string msg = "expected next token to be " + token_type_to_string(type) + ", got " + token_type_to_string(peek_token.type) + " instead";
+        errors.push_back(msg);
+    }
+
+    void no_prefix_parse_fn_error(TokenType type) {
+        string msg = "no prefix parse function for " + token_type_to_string(type) + " found";
+        errors.push_back(msg);
+    }
 
     bool expect_peek(TokenType type) {
         if (peek_token_is(type)) {
             parser_next_token();
             return true;
         } else {
-//            peek_error(type);
+            peek_error(type);
             return false;
         }
     }

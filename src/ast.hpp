@@ -5,13 +5,14 @@
 
 #include "token.hpp"
 #include <vector>
+#include <sstream>
 
 using namespace std;
 
 class Node {
 public:
     virtual string token_literal() = 0;
-//    virtual void print() = 0;
+    virtual string to_string() = 0;
 };
 
 class Statement : public Node { // 语句
@@ -22,6 +23,9 @@ public:
 class Expression : public Node { // 表达式
 public:
     string token_literal() override{
+        return "";
+    };
+    string to_string() override {
         return "";
     };
     virtual string expression_node(){
@@ -40,11 +44,13 @@ public:
         }
     }
 
-//    void print() override {
-//        for (auto &stmt : statements) {
-//            stmt->print();
-//        }
-//    }
+    string to_string() override {
+        stringstream out;
+        for (auto &stmt : statements) {
+            out << stmt->to_string();
+        }
+        return out.str();
+    }
 };
 
 // 标识符表达式
@@ -55,6 +61,9 @@ public:
     string token_literal() override {
         return token.Literal;
     }
+    string to_string() override {
+        return value;
+    }
 };
 
 // 整型字面量表达式
@@ -63,6 +72,9 @@ public:
     Token token;
     int value{};
     string token_literal() override {
+        return token.Literal;
+    }
+    string to_string() override {
         return token.Literal;
     }
 };
@@ -76,6 +88,15 @@ public:
     string token_literal() override {
         return token.Literal;
     }
+    string to_string() override {
+        stringstream out;
+        out << "(" << op;
+        if (right != nullptr) {
+            out << right->to_string();
+        }
+        out << ")";
+        return out.str();
+    }
 };
 
 // 中缀表达式
@@ -88,6 +109,19 @@ public:
     string token_literal() override {
         return token.Literal;
     }
+    string to_string() override {
+        stringstream out;
+        out << "(";
+        if (left != nullptr) {
+            out << left->to_string();
+        }
+        out << " " << op << " ";
+        if (right != nullptr) {
+            out << right->to_string();
+        }
+        out << ")";
+        return out.str();
+    }
 };
 
 // 布尔表达式
@@ -98,6 +132,9 @@ public:
     string token_literal() override {
         return token.Literal;
     }
+    string to_string() override {
+        return token.Literal;
+    }
 };
 
 // 语句块
@@ -106,10 +143,17 @@ public:
     Token token;
     vector<Statement *> statements;
     string statement_node() override {
-        // TODO
+        return "";
     }
     string token_literal() override {
         return token.Literal;
+    }
+    string to_string() override {
+        stringstream out;
+        for (auto &stmt : statements) {
+            out << stmt->to_string();
+        }
+        return out.str();
     }
 };
 
@@ -123,6 +167,21 @@ public:
     string token_literal() override {
         return token.Literal;
     }
+    string to_string() override {
+        stringstream out;
+        out << "if";
+        if (condition != nullptr) {
+            out << condition->to_string();
+        }
+        out << " ";
+        if (consequence != nullptr) {
+            out << consequence->to_string();
+        }
+        if (alternative != nullptr) {
+            out << "else " << alternative->to_string();
+        }
+        return out.str();
+    }
 };
 
 // 函数字面量表达式
@@ -133,6 +192,21 @@ public:
     BlockStatement *body{};
     string token_literal() override {
         return token.Literal;
+    }
+    string to_string() override {
+        stringstream out;
+        out << token_literal() << "(";
+        for (size_t i = 0; i < parameters.size(); i++) {
+            if (i > 0) {
+                out << ", ";
+            }
+            out << parameters[i]->to_string();
+        }
+        out << ") ";
+        if (body != nullptr) {
+            out << body->to_string();
+        }
+        return out.str();
     }
 };
 
@@ -145,6 +219,21 @@ public:
     string token_literal() override {
         return token.Literal;
     }
+    string to_string() override {
+        stringstream out;
+        if (function != nullptr) {
+            out << function->to_string();
+        }
+        out << "(";
+        for (size_t i = 0; i < arguments.size(); i++) {
+            if (i > 0) {
+                out << ", ";
+            }
+            out << arguments[i]->to_string();
+        }
+        out << ")";
+        return out.str();
+    }
 };
 
 // VAR语句
@@ -154,10 +243,23 @@ public:
     Identifier *name{};
     Expression *value{};
     string statement_node() override {
-        // TODO
+        return "";
     }
     string token_literal() override {
         return token.Literal;
+    }
+    string to_string() override {
+        stringstream out;
+        out << token_literal() << " ";
+        if (name != nullptr) {
+            out << name->to_string();
+        }
+        out << " = ";
+        if (value != nullptr) {
+            out << value->to_string();
+        }
+        out << ";";
+        return out.str();
     }
 };
 
@@ -167,10 +269,19 @@ public:
     Token token;
     Expression *return_value{};
     string statement_node() override {
-        // TODO
+        return "";
     }
     string token_literal() override {
         return token.Literal;
+    }
+    string to_string() override {
+        stringstream out;
+        out << token_literal() << " ";
+        if (return_value != nullptr) {
+            out << return_value->to_string();
+        }
+        out << ";";
+        return out.str();
     }
 };
 
@@ -180,10 +291,16 @@ public:
     Token token;
     Expression *expression{};
     string statement_node() override {
-        // TODO
+        return "";
     }
     string token_literal() override {
         return token.Literal;
+    }
+    string to_string() override {
+        if (expression != nullptr) {
+            return expression->to_string();
+        }
+        return "";
     }
 };
 

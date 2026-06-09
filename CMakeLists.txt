@@ -9,4 +9,5 @@ add_executable(Firefly_interpreter src/main.cpp
         src/repl.hpp
         src/ast.hpp
         src/parser.hpp
+        src/semantic.hpp
 )

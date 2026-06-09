@@ -30,3 +30,17 @@
 *.exe
 *.out
 *.app
+
+# IDE files
+.idea/
+
+# CMake build directories
+cmake-build-*/
+build/
+out/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json

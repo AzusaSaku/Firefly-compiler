@@ -5,7 +5,6 @@
 
 #include <string>
 #include <map>
-#include "include/magic_enum.hpp"
 
 using namespace std;
 
@@ -26,7 +25,7 @@ struct Token {
 };
 
 // 关键字
-map<string, TokenType, less<>> keywords = {
+inline const map<string, TokenType, less<>> keywords = {
         {"func",   TokenType::FUNC},
         {"var",    TokenType::VAR},
         {"true",   TokenType::TRUE},
@@ -36,11 +35,73 @@ map<string, TokenType, less<>> keywords = {
         {"return", TokenType::RETURN}
 };
 
-TokenType lookup_ident(const string &ident) {
-    if (keywords.find(ident) != keywords.end()) {
-        return keywords[ident];
+inline TokenType lookup_ident(const string &ident) {
+    auto it = keywords.find(ident);
+    if (it != keywords.end()) {
+        return it->second;
     }
     return TokenType::IDENT;
+}
+
+inline string token_type_to_string(TokenType type) {
+    switch (type) {
+        case TokenType::ILLEGAL:
+            return "ILLEGAL";
+        case TokenType::END:
+            return "END";
+        case TokenType::IDENT:
+            return "IDENT";
+        case TokenType::INT:
+            return "INT";
+        case TokenType::ASSIGN:
+            return "ASSIGN";
+        case TokenType::PLUS:
+            return "PLUS";
+        case TokenType::MINUS:
+            return "MINUS";
+        case TokenType::ASTERISK:
+            return "ASTERISK";
+        case TokenType::SLASH:
+            return "SLASH";
+        case TokenType::BANG:
+            return "BANG";
+        case TokenType::LT:
+            return "LT";
+        case TokenType::GT:
+            return "GT";
+        case TokenType::COMMA:
+            return "COMMA";
+        case TokenType::SEMICOLON:
+            return "SEMICOLON";
+        case TokenType::LPAREN:
+            return "LPAREN";
+        case TokenType::RPAREN:
+            return "RPAREN";
+        case TokenType::LBRACE:
+            return "LBRACE";
+        case TokenType::RBRACE:
+            return "RBRACE";
+        case TokenType::EQ:
+            return "EQ";
+        case TokenType::NOT_EQ:
+            return "NOT_EQ";
+        case TokenType::FUNC:
+            return "FUNC";
+        case TokenType::VAR:
+            return "VAR";
+        case TokenType::TRUE:
+            return "TRUE";
+        case TokenType::FALSE:
+            return "FALSE";
+        case TokenType::IF:
+            return "IF";
+        case TokenType::ELSE:
+            return "ELSE";
+        case TokenType::RETURN:
+            return "RETURN";
+        default:
+            return "UNKNOWN";
+    }
 }
 
 #endif //FIREFLY_INTERPRETER_TOKEN_H
