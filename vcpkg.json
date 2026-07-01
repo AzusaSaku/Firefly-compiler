@@ -1,0 +1,7 @@
+{
+  "name": "firefly-compiler",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "llvm"
+  ]
+}
