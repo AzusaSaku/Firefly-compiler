@@ -57,6 +57,12 @@ cmake --build build
 The maintainer's local fallback path is `D:/vcpkg/installed/x64-windows-release`.
 CMake uses it only when neither `LLVM_DIR` nor `CMAKE_TOOLCHAIN_FILE` is set.
 
+Run the current LLVM smoke tests after building:
+
+```powershell
+.\tests\smoke_llvm.ps1 -Exe .\build\Debug\Firefly_compiler.exe
+```
+
 On Windows Debug builds, the executable is usually here:
 
 ```powershell

@@ -358,6 +358,12 @@ private:
             return consequence;
         }
 
+        if (auto *while_exp = dynamic_cast<WhileExpression *>(expression)) {
+            infer_expression(while_exp->condition);
+            infer_block(while_exp->body);
+            return FireflyLlvmType::void_type();
+        }
+
         if (auto *function = dynamic_cast<FunctionLiteral *>(expression)) {
             vector<FireflyLlvmType> params(function->parameters.size(), FireflyLlvmType::unknown());
             return FireflyLlvmType::function_type(params, FireflyLlvmType::unknown());
@@ -367,16 +373,37 @@ private:
             return infer_call_expression(call);
         }
 
-        if (dynamic_cast<WhileExpression *>(expression) != nullptr ||
-            dynamic_cast<ArrayLiteral *>(expression) != nullptr ||
+        if (auto *assign = dynamic_cast<AssignExpression *>(expression)) {
+            return infer_assign_expression(assign);
+        }
+
+        if (dynamic_cast<ArrayLiteral *>(expression) != nullptr ||
             dynamic_cast<IndexExpression *>(expression) != nullptr ||
-            dynamic_cast<AssignExpression *>(expression) != nullptr ||
             dynamic_cast<HashLiteral *>(expression) != nullptr) {
             errors.push_back("unsupported AST node for --emit-llvm in first stage: " + expression->to_string());
             return FireflyLlvmType::unknown();
         }
 
         return FireflyLlvmType::unknown();
+    }
+
+    FireflyLlvmType infer_assign_expression(AssignExpression *assign) {
+        auto value = infer_expression(assign->value);
+
+        auto *ident = dynamic_cast<Identifier *>(assign->left);
+        if (ident == nullptr) {
+            errors.push_back("only identifier assignment is supported by --emit-llvm yet");
+            return FireflyLlvmType::unknown();
+        }
+
+        auto *target = resolve(ident->value);
+        if (target == nullptr) {
+            errors.push_back("undefined identifier in LLVM backend assignment: " + ident->value);
+            return FireflyLlvmType::unknown();
+        }
+
+        merge_into(*target, value, "assignment to '" + ident->value + "'");
+        return *target;
     }
 
     FireflyLlvmType infer_infix_expression(InfixExpression *infix) {
@@ -853,8 +880,16 @@ private:
             return emit_if_expression(if_exp);
         }
 
+        if (auto *while_exp = dynamic_cast<WhileExpression *>(expression)) {
+            return emit_while_expression(while_exp);
+        }
+
         if (auto *call = dynamic_cast<CallExpression *>(expression)) {
             return emit_call_expression(call);
+        }
+
+        if (auto *assign = dynamic_cast<AssignExpression *>(expression)) {
+            return emit_assign_expression(assign);
         }
 
         if (dynamic_cast<FunctionLiteral *>(expression) != nullptr) {
@@ -864,6 +899,25 @@ private:
 
         errors.push_back("unsupported expression for --emit-llvm: " + expression->to_string());
         return FireflyLlvmValue{nullptr, FireflyLlvmType::unknown()};
+    }
+
+    FireflyLlvmValue emit_assign_expression(AssignExpression *assign) {
+        auto *ident = dynamic_cast<Identifier *>(assign->left);
+        if (ident == nullptr) {
+            errors.push_back("only identifier assignment is supported by --emit-llvm yet");
+            return FireflyLlvmValue{nullptr, FireflyLlvmType::unknown()};
+        }
+
+        auto *variable = resolve_variable(ident->value);
+        if (variable == nullptr) {
+            errors.push_back("undefined identifier in LLVM backend assignment: " + ident->value);
+            return FireflyLlvmValue{nullptr, FireflyLlvmType::unknown()};
+        }
+
+        auto value = emit_expression(assign->value);
+        auto *stored = cast_value(value, variable->type);
+        builder->CreateStore(stored, variable->storage);
+        return FireflyLlvmValue{stored, variable->type};
     }
 
     FireflyLlvmValue emit_identifier(Identifier *ident) {
@@ -1032,6 +1086,30 @@ private:
             return FireflyLlvmValue{phi, then_value.type};
         }
 
+        return FireflyLlvmValue{nullptr, FireflyLlvmType::void_type()};
+    }
+
+    FireflyLlvmValue emit_while_expression(WhileExpression *while_exp) {
+        auto *fn = current_function;
+        auto *condition_block = llvm::BasicBlock::Create(*context, "while.cond", fn);
+        auto *body_block = llvm::BasicBlock::Create(*context, "while.body");
+        auto *after_block = llvm::BasicBlock::Create(*context, "while.end");
+
+        builder->CreateBr(condition_block);
+
+        builder->SetInsertPoint(condition_block);
+        auto condition = emit_expression(while_exp->condition);
+        builder->CreateCondBr(truthy_value(condition), body_block, after_block);
+
+        fn->insert(fn->end(), body_block);
+        builder->SetInsertPoint(body_block);
+        emit_block(while_exp->body);
+        if (!current_block_has_terminator()) {
+            builder->CreateBr(condition_block);
+        }
+
+        fn->insert(fn->end(), after_block);
+        builder->SetInsertPoint(after_block);
         return FireflyLlvmValue{nullptr, FireflyLlvmType::void_type()};
     }
 
