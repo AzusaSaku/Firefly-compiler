@@ -103,6 +103,30 @@ inline filesystem::path find_llvm_tool(const string &tool_name) {
     return filesystem::path(tool_name);
 }
 
+inline string executable_tool_name(const string &name) {
+#ifdef _WIN32
+    return name + ".exe";
+#else
+    return name;
+#endif
+}
+
+inline string native_object_extension() {
+#ifdef _WIN32
+    return ".obj";
+#else
+    return ".o";
+#endif
+}
+
+inline string native_executable_extension() {
+#ifdef _WIN32
+    return ".exe";
+#else
+    return "";
+#endif
+}
+
 inline int run_command(const string &command, ostream &err) {
 #ifdef _WIN32
     string shell_command = "\"" + command + "\"";
@@ -161,7 +185,7 @@ inline filesystem::path temporary_ir_path_for(const filesystem::path &input_path
 inline int emit_object_from_ir(const filesystem::path &ir_path,
                                const filesystem::path &object_path,
                                ostream &err) {
-    auto llc = find_llvm_tool("llc.exe");
+    auto llc = find_llvm_tool(executable_tool_name("llc"));
     string command = quote_command_path(llc) +
                      " -filetype=obj " +
                      quote_command_path(ir_path) +
@@ -170,9 +194,10 @@ inline int emit_object_from_ir(const filesystem::path &ir_path,
     return run_command(command, err);
 }
 
-inline int link_windows_executable(const filesystem::path &object_path,
-                                   const filesystem::path &exe_path,
-                                   ostream &err) {
+inline int link_native_executable(const filesystem::path &object_path,
+                                  const filesystem::path &exe_path,
+                                  ostream &err) {
+#ifdef _WIN32
     auto linker = find_llvm_tool("lld-link.exe");
     string command = quote_command_path(linker) +
                      " /nologo /machine:x64 /entry:main /subsystem:console /nodefaultlib " +
@@ -180,6 +205,19 @@ inline int link_windows_executable(const filesystem::path &object_path,
                      " /out:" +
                      quote_command_path(exe_path);
     return run_command(command, err);
+#else
+    auto linker = find_llvm_tool("clang");
+    if (!filesystem::exists(linker) && !llvm_tools_dir().empty()) {
+        linker = filesystem::path("cc");
+    }
+
+    string command = quote_command_path(linker) +
+                     " " +
+                     quote_command_path(object_path) +
+                     " -o " +
+                     quote_command_path(exe_path);
+    return run_command(command, err);
+#endif
 }
 
 inline int run_source(const string &source, DriverMode mode, ostream &out, ostream &err) {
@@ -264,7 +302,7 @@ inline int run_file(const string &path, DriverMode mode, ostream &out, ostream &
     }
 
     filesystem::path object_path(input_path);
-    object_path.replace_extension(".obj");
+    object_path.replace_extension(native_object_extension());
     int object_result = emit_object_from_ir(temp_ir_path, object_path, err);
     filesystem::remove(temp_ir_path);
     if (object_result != 0) {
@@ -277,8 +315,8 @@ inline int run_file(const string &path, DriverMode mode, ostream &out, ostream &
     }
 
     filesystem::path exe_path(input_path);
-    exe_path.replace_extension(".exe");
-    int link_result = link_windows_executable(object_path, exe_path, err);
+    exe_path.replace_extension(native_executable_extension());
+    int link_result = link_native_executable(object_path, exe_path, err);
     filesystem::remove(object_path);
     if (link_result != 0) {
         return link_result;
@@ -295,8 +333,8 @@ inline void print_usage(ostream &out, const string &program_name) {
     out << "  " << program_name << " --eval <file>   Evaluate file" << endl;
     out << "  " << program_name << " --ast <file>    Print AST" << endl;
     out << "  " << program_name << " --emit-llvm <file>  Emit LLVM IR to <file>.ll" << endl;
-    out << "  " << program_name << " --emit-obj <file>   Emit native object to <file>.obj" << endl;
-    out << "  " << program_name << " --build <file>      Build Windows executable to <file>.exe" << endl;
+    out << "  " << program_name << " --emit-obj <file>   Emit native object file" << endl;
+    out << "  " << program_name << " --build <file>      Build native executable" << endl;
     out << "  " << program_name << " --repl          Start REPL" << endl;
     out << "  " << program_name << " --help          Show help" << endl;
 }

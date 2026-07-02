@@ -63,6 +63,12 @@ Run the current LLVM smoke tests after building:
 .\tests\smoke_llvm.ps1 -Exe .\build\Debug\Firefly_compiler.exe
 ```
 
+On Linux:
+
+```bash
+bash ./tests/smoke_llvm.sh ./build/Firefly_compiler
+```
+
 On Windows Debug builds, the executable is usually here:
 
 ```powershell
@@ -127,20 +133,22 @@ Firefly_compiler --emit-llvm main.ff
 
 This writes `main.ll` next to the input file.
 
-Emit a Windows object file:
+Emit a native object file:
 
 ```bash
 Firefly_compiler --emit-obj main.ff
 ```
 
-Build a Windows executable:
+This writes `main.obj` on Windows and `main.o` on Linux.
+
+Build a native executable:
 
 ```bash
 Firefly_compiler --build main.ff
 ```
 
-`--build` currently uses LLVM's `llc` and `lld-link` tools, so it is limited to
-the Windows native pipeline for now.
+This writes `main.exe` on Windows and `main` on Linux. `--build` currently uses
+LLVM's `llc` plus `lld-link` on Windows, and `llc` plus `clang`/`cc` on Linux.
 
 Show CLI help:
 
