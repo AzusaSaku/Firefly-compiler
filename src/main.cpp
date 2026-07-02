@@ -47,6 +47,16 @@ int main(int argc, char *argv[])
             continue;
         }
 
+        if (arg == "--emit-obj") {
+            mode = DriverMode::EMIT_OBJ;
+            continue;
+        }
+
+        if (arg == "--build" || arg == "--compile") {
+            mode = DriverMode::BUILD_EXE;
+            continue;
+        }
+
         if (!arg.empty() && arg[0] == '-') {
             cerr << "unknown option: " << arg << endl;
             print_usage(cerr, program_name);

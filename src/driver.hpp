@@ -6,6 +6,7 @@
 #include "evaluator.hpp"
 #include "llvm_codegen.hpp"
 #include "parser.hpp"
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -19,7 +20,9 @@ using namespace std;
 enum class DriverMode {
     EVAL,
     AST,
-    EMIT_LLVM
+    EMIT_LLVM,
+    EMIT_OBJ,
+    BUILD_EXE
 };
 
 struct FrontendResult {
@@ -55,6 +58,130 @@ inline FrontendResult parse_source(const string &source) {
     return result;
 }
 
+inline string quote_command_path(const filesystem::path &path) {
+    filesystem::path normalized = path;
+    if (path.is_relative() && (path.has_parent_path() || filesystem::exists(path))) {
+        normalized = filesystem::absolute(path);
+    }
+    normalized.make_preferred();
+
+    string text = normalized.string();
+    string quoted = "\"";
+    for (char ch : text) {
+        if (ch == '"') {
+            quoted += "\\\"";
+        } else {
+            quoted += ch;
+        }
+    }
+    quoted += "\"";
+    return quoted;
+}
+
+inline filesystem::path llvm_tools_dir() {
+    const char *env = getenv("FIREFLY_LLVM_TOOLS_DIR");
+    if (env != nullptr && env[0] != '\0') {
+        return filesystem::path(env);
+    }
+
+#ifdef FIREFLY_LLVM_TOOLS_DIR
+    return filesystem::path(FIREFLY_LLVM_TOOLS_DIR);
+#else
+    return filesystem::path();
+#endif
+}
+
+inline filesystem::path find_llvm_tool(const string &tool_name) {
+    auto dir = llvm_tools_dir();
+    if (!dir.empty()) {
+        auto candidate = dir / tool_name;
+        if (filesystem::exists(candidate)) {
+            return candidate;
+        }
+    }
+
+    return filesystem::path(tool_name);
+}
+
+inline int run_command(const string &command, ostream &err) {
+#ifdef _WIN32
+    string shell_command = "\"" + command + "\"";
+#else
+    string shell_command = command;
+#endif
+
+    int result = system(shell_command.c_str());
+    if (result != 0) {
+        err << "command failed: " << command << endl;
+        return 1;
+    }
+    return 0;
+}
+
+inline int write_text_file(const filesystem::path &path, const string &content, ostream &err) {
+    ofstream output(path);
+    if (!output) {
+        err << "could not open output file: " << path.string() << endl;
+        return 1;
+    }
+
+    output << content;
+    return 0;
+}
+
+inline bool compile_source_to_ir(const string &source,
+                                 const string &module_name,
+                                 string &ir,
+                                 ostream &err) {
+    auto frontend = parse_source(source);
+    if (!frontend.ok()) {
+        for (auto &msg : frontend.errors) {
+            err << "parser error: " << msg << endl;
+        }
+        return false;
+    }
+
+    vector<string> codegen_errors;
+    if (!compile_program_to_llvm_ir(frontend.program.get(), module_name, ir, codegen_errors)) {
+        for (auto &msg : codegen_errors) {
+            err << "llvm error: " << msg << endl;
+        }
+        return false;
+    }
+
+    return true;
+}
+
+inline filesystem::path temporary_ir_path_for(const filesystem::path &input_path) {
+    filesystem::path temp = input_path;
+    temp.replace_filename(input_path.stem().string() + ".firefly.tmp.ll");
+    return temp;
+}
+
+inline int emit_object_from_ir(const filesystem::path &ir_path,
+                               const filesystem::path &object_path,
+                               ostream &err) {
+    auto llc = find_llvm_tool("llc.exe");
+    string command = quote_command_path(llc) +
+                     " -filetype=obj " +
+                     quote_command_path(ir_path) +
+                     " -o " +
+                     quote_command_path(object_path);
+    return run_command(command, err);
+}
+
+inline int link_windows_executable(const filesystem::path &object_path,
+                                   const filesystem::path &exe_path,
+                                   ostream &err) {
+    auto linker = find_llvm_tool("lld-link.exe");
+    string command = quote_command_path(linker) +
+                     " /nologo /machine:x64 /entry:main /subsystem:console /nodefaultlib " +
+                     quote_command_path(object_path) +
+                     " /out:" +
+                     quote_command_path(exe_path);
+    return run_command(command, err);
+}
+
 inline int run_source(const string &source, DriverMode mode, ostream &out, ostream &err) {
     auto frontend = parse_source(source);
     if (!frontend.ok()) {
@@ -83,6 +210,11 @@ inline int run_source(const string &source, DriverMode mode, ostream &out, ostre
         return 0;
     }
 
+    if (mode == DriverMode::EMIT_OBJ || mode == DriverMode::BUILD_EXE) {
+        err << "native output modes require an input file path" << endl;
+        return 1;
+    }
+
     auto env = new_environment();
     auto evaluated = eval(frontend.program.get(), env);
     if (evaluated != nullptr) {
@@ -106,38 +238,53 @@ inline int run_file(const string &path, DriverMode mode, ostream &out, ostream &
         return 1;
     }
 
-    if (mode != DriverMode::EMIT_LLVM) {
+    if (mode != DriverMode::EMIT_LLVM && mode != DriverMode::EMIT_OBJ && mode != DriverMode::BUILD_EXE) {
         return run_source(source, mode, out, err);
     }
 
-    auto frontend = parse_source(source);
-    if (!frontend.ok()) {
-        for (auto &msg : frontend.errors) {
-            err << "parser error: " << msg << endl;
-        }
-        return 1;
-    }
-
     string ir;
-    vector<string> codegen_errors;
-    filesystem::path output_path(path);
-    output_path.replace_extension(".ll");
+    filesystem::path input_path(path);
+    if (!compile_source_to_ir(source, input_path.filename().string(), ir, err)) {
+        return 1;
+    }
 
-    if (!compile_program_to_llvm_ir(frontend.program.get(), output_path.filename().string(), ir, codegen_errors)) {
-        for (auto &msg : codegen_errors) {
-            err << "llvm error: " << msg << endl;
+    if (mode == DriverMode::EMIT_LLVM) {
+        filesystem::path output_path(input_path);
+        output_path.replace_extension(".ll");
+        if (write_text_file(output_path, ir, err) != 0) {
+            return 1;
         }
+        out << "wrote " << output_path.string() << endl;
+        return 0;
+    }
+
+    filesystem::path temp_ir_path = temporary_ir_path_for(input_path);
+    if (write_text_file(temp_ir_path, ir, err) != 0) {
         return 1;
     }
 
-    ofstream output(output_path);
-    if (!output) {
-        err << "could not open output file: " << output_path.string() << endl;
-        return 1;
+    filesystem::path object_path(input_path);
+    object_path.replace_extension(".obj");
+    int object_result = emit_object_from_ir(temp_ir_path, object_path, err);
+    filesystem::remove(temp_ir_path);
+    if (object_result != 0) {
+        return object_result;
     }
 
-    output << ir;
-    out << "wrote " << output_path.string() << endl;
+    if (mode == DriverMode::EMIT_OBJ) {
+        out << "wrote " << object_path.string() << endl;
+        return 0;
+    }
+
+    filesystem::path exe_path(input_path);
+    exe_path.replace_extension(".exe");
+    int link_result = link_windows_executable(object_path, exe_path, err);
+    filesystem::remove(object_path);
+    if (link_result != 0) {
+        return link_result;
+    }
+
+    out << "wrote " << exe_path.string() << endl;
     return 0;
 }
 
@@ -148,6 +295,8 @@ inline void print_usage(ostream &out, const string &program_name) {
     out << "  " << program_name << " --eval <file>   Evaluate file" << endl;
     out << "  " << program_name << " --ast <file>    Print AST" << endl;
     out << "  " << program_name << " --emit-llvm <file>  Emit LLVM IR to <file>.ll" << endl;
+    out << "  " << program_name << " --emit-obj <file>   Emit native object to <file>.obj" << endl;
+    out << "  " << program_name << " --build <file>      Build Windows executable to <file>.exe" << endl;
     out << "  " << program_name << " --repl          Start REPL" << endl;
     out << "  " << program_name << " --help          Show help" << endl;
 }

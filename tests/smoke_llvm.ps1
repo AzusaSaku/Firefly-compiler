@@ -102,6 +102,28 @@ Assert-Contains "loop IR" $loopIr "while\.body"
 Assert-Contains "loop IR" $loopIr "while\.end"
 Assert-Contains "loop IR" $loopIr "store i64"
 
+& $compiler --emit-obj $loopFile | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "loop emit-obj failed"
+}
+$loopObject = Join-Path $tmp "loop_assign.obj"
+if (!(Test-Path $loopObject)) {
+    throw "loop emit-obj failed: object file was not created"
+}
+
+& $compiler --build $loopFile | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "loop build failed"
+}
+$loopExe = Join-Path $tmp "loop_assign.exe"
+if (!(Test-Path $loopExe)) {
+    throw "loop build failed: executable was not created"
+}
+& $loopExe
+if ($LASTEXITCODE -ne 0) {
+    throw "loop executable failed with exit code $LASTEXITCODE"
+}
+
 $fibSource = @'
 var fib = func(n) {
   if (n < 2) {

@@ -127,6 +127,21 @@ Firefly_compiler --emit-llvm main.ff
 
 This writes `main.ll` next to the input file.
 
+Emit a Windows object file:
+
+```bash
+Firefly_compiler --emit-obj main.ff
+```
+
+Build a Windows executable:
+
+```bash
+Firefly_compiler --build main.ff
+```
+
+`--build` currently uses LLVM's `llc` and `lld-link` tools, so it is limited to
+the Windows native pipeline for now.
+
 Show CLI help:
 
 ```bash
