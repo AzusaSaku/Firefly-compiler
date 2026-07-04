@@ -6,6 +6,7 @@
 #include "evaluator.hpp"
 #include "llvm_codegen.hpp"
 #include "parser.hpp"
+#include "semantic.hpp"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -56,6 +57,20 @@ inline FrontendResult parse_source(const string &source) {
     result.program = unique_ptr<Program>(program);
     result.errors = parser.errors;
     return result;
+}
+
+inline bool analyze_frontend(Program *program, ostream &err) {
+    SemanticAnalyzer analyzer;
+    analyzer.analyze(program);
+
+    if (!analyzer.errors.empty()) {
+        for (auto &msg : analyzer.errors) {
+            err << "semantic error: " << msg << endl;
+        }
+        return false;
+    }
+
+    return true;
 }
 
 inline string quote_command_path(const filesystem::path &path) {
@@ -165,6 +180,10 @@ inline bool compile_source_to_ir(const string &source,
         return false;
     }
 
+    if (!analyze_frontend(frontend.program.get(), err)) {
+        return false;
+    }
+
     vector<string> codegen_errors;
     if (!compile_program_to_llvm_ir(frontend.program.get(), module_name, ir, codegen_errors)) {
         for (auto &msg : codegen_errors) {
@@ -232,6 +251,10 @@ inline int run_source(const string &source, DriverMode mode, ostream &out, ostre
     if (mode == DriverMode::AST) {
         out << frontend.program->to_string() << endl;
         return 0;
+    }
+
+    if (!analyze_frontend(frontend.program.get(), err)) {
+        return 1;
     }
 
     if (mode == DriverMode::EMIT_LLVM) {
@@ -335,7 +358,9 @@ inline void print_usage(ostream &out, const string &program_name) {
     out << "  " << program_name << " --emit-llvm <file>  Emit LLVM IR to <file>.ll" << endl;
     out << "  " << program_name << " --emit-obj <file>   Emit native object file" << endl;
     out << "  " << program_name << " --build <file>      Build native executable" << endl;
+    out << "  " << program_name << " --compile <file>    Alias for --build" << endl;
     out << "  " << program_name << " --repl          Start REPL" << endl;
+    out << "  " << program_name << " --version       Show version" << endl;
     out << "  " << program_name << " --help          Show help" << endl;
 }
 

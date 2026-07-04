@@ -3,9 +3,13 @@
 #include "repl.hpp"
 using namespace std;
 
+#ifndef FIREFLY_VERSION
+#define FIREFLY_VERSION "dev"
+#endif
+
 int main(int argc, char *argv[])
 {
-    string program_name = argc > 0 ? argv[0] : "Firefly_compiler";
+    string program_name = argc > 0 ? argv[0] : "firefly";
 
     if (argc == 1) {
         cout << "Hello Firefly!" << endl;
@@ -22,6 +26,11 @@ int main(int argc, char *argv[])
 
         if (arg == "--help" || arg == "-h") {
             print_usage(cout, program_name);
+            return 0;
+        }
+
+        if (arg == "--version" || arg == "-V") {
+            cout << "firefly " << FIREFLY_VERSION << endl;
             return 0;
         }
 

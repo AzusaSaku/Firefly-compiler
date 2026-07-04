@@ -80,6 +80,7 @@ public:
         this->register_prefix(TokenType::STRING, [this]() { return this->parse_string_literal(); });
         this->register_prefix(TokenType::BANG, [this]() { return this->parse_prefix_expression(); });
         this->register_prefix(TokenType::MINUS, [this]() { return this->parse_prefix_expression(); });
+        this->register_prefix(TokenType::AMP, [this]() { return this->parse_borrow_expression(); });
         this->register_prefix(TokenType::TRUE, [this]() { return this->parse_boolean(); });
         this->register_prefix(TokenType::FALSE, [this]() { return this->parse_boolean(); });
         this->register_prefix(TokenType::LPAREN, [this]() { return this->parse_grouped_expression(); });
@@ -132,8 +133,10 @@ public:
 
     Statement *parse_statement() {
         switch (cur_token.type) {
+            case TokenType::LET:
+                return parse_var_statement(false);
             case TokenType::VAR:
-                return parse_var_statement();
+                return parse_var_statement(true);
             case TokenType::RETURN:
                 return parse_return_statement();
             default:
@@ -221,6 +224,21 @@ public:
         parser_next_token();
         expression->right = parse_expression(Precedence(precedence));
 
+        return expression;
+    }
+
+    // 解析借用表达式
+    Expression *parse_borrow_expression() {
+        auto *expression = new BorrowExpression();
+        expression->token = cur_token;
+
+        parser_next_token();
+        if (cur_token_is(TokenType::VAR)) {
+            expression->is_mutable = true;
+            parser_next_token();
+        }
+
+        expression->value = parse_expression(Precedence::PREFIX);
         return expression;
     }
 
@@ -347,6 +365,10 @@ public:
 
         function->parameters = parse_function_parameters();
 
+        if (!parse_optional_return_type_annotation(function)) {
+            return nullptr;
+        }
+
         if (!expect_peek(TokenType::LBRACE)) {
             return nullptr;
         }
@@ -370,6 +392,10 @@ public:
         auto *ident = new Identifier();
         ident->token = cur_token;
         ident->value = cur_token.Literal;
+        if (!parse_optional_identifier_type_annotation(ident)) {
+            delete ident;
+            return {};
+        }
         identifiers.push_back(ident);
 
         while (peek_token_is(TokenType::COMMA)) {
@@ -379,6 +405,10 @@ public:
             ident = new Identifier();
             ident->token = cur_token;
             ident->value = cur_token.Literal;
+            if (!parse_optional_identifier_type_annotation(ident)) {
+                delete ident;
+                return {};
+            }
             identifiers.push_back(ident);
         }
 
@@ -488,10 +518,11 @@ public:
         return stmt;
     }
 
-    // 解析var语句
-    VarStatement *parse_var_statement() {
+    // 解析let/var绑定语句
+    VarStatement *parse_var_statement(bool is_mutable) {
         auto *stmt = new VarStatement();
         stmt->token = cur_token;
+        stmt->is_mutable = is_mutable;
 
         if (!expect_peek(TokenType::IDENT)) {
             return nullptr;
@@ -500,6 +531,10 @@ public:
         stmt->name = new Identifier;
         stmt->name->token = cur_token;
         stmt->name->value = cur_token.Literal;
+
+        if (!parse_optional_identifier_type_annotation(stmt->name)) {
+            return nullptr;
+        }
 
         if (!expect_peek(TokenType::ASSIGN)) {
             return nullptr;
@@ -545,6 +580,87 @@ public:
 
     bool peek_token_is(TokenType type) const {
         return peek_token.type == type;
+    }
+
+    bool parse_optional_identifier_type_annotation(Identifier *ident) {
+        if (!peek_token_is(TokenType::COLON)) {
+            return true;
+        }
+
+        parser_next_token();
+        if (!expect_peek_type_annotation_start()) {
+            return false;
+        }
+
+        return parse_type_annotation_from_current(ident->type_annotation);
+    }
+
+    bool parse_optional_return_type_annotation(FunctionLiteral *function) {
+        if (!peek_token_is(TokenType::COLON)) {
+            return true;
+        }
+
+        parser_next_token();
+        if (!expect_peek_type_annotation_start()) {
+            return false;
+        }
+
+        return parse_type_annotation_from_current(function->return_type_annotation);
+    }
+
+    bool parse_type_annotation_from_current(string &annotation) {
+        if (cur_token_is(TokenType::AMP)) {
+            annotation = "&";
+            parser_next_token();
+            if (cur_token_is(TokenType::VAR)) {
+                annotation += "var ";
+                parser_next_token();
+            }
+
+            if (!cur_token_is(TokenType::IDENT)) {
+                errors.push_back("expected type annotation after &, got " + token_type_to_string(cur_token.type) + " instead");
+                return false;
+            }
+
+            string target_annotation;
+            if (!parse_type_annotation_from_current(target_annotation)) {
+                return false;
+            }
+            annotation += target_annotation;
+            return true;
+        }
+
+        annotation = cur_token.Literal;
+
+        if (!peek_token_is(TokenType::LT)) {
+            return true;
+        }
+
+        parser_next_token();
+        string element_annotation;
+        if (!expect_peek(TokenType::IDENT)) {
+            return false;
+        }
+        if (!parse_type_annotation_from_current(element_annotation)) {
+            return false;
+        }
+        if (!expect_peek(TokenType::GT)) {
+            return false;
+        }
+
+        annotation += "<" + element_annotation + ">";
+        return true;
+    }
+
+    bool expect_peek_type_annotation_start() {
+        if (peek_token_is(TokenType::IDENT) || peek_token_is(TokenType::AMP)) {
+            parser_next_token();
+            return true;
+        }
+
+        string msg = "expected next token to be type annotation, got " + token_type_to_string(peek_token.type) + " instead";
+        errors.push_back(msg);
+        return false;
     }
 
     void peek_error(TokenType type) {

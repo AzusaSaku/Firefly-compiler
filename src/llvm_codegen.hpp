@@ -160,6 +160,201 @@ struct FireflyLlvmFunctionInfo {
     FireflyLlvmType type;
 };
 
+struct FireflyLlvmSymbol {
+    FireflyLlvmType type;
+    bool is_mutable{true};
+};
+
+class FireflyLlvmFeatureChecker {
+public:
+    bool check(Program *program) {
+        if (program != nullptr) {
+            for (auto *stmt : program->statements) {
+                check_statement(stmt);
+            }
+        }
+        return errors.empty();
+    }
+
+    vector<string> errors;
+
+private:
+    set<string> seen_errors;
+
+    void add_error_once(const string &message) {
+        if (seen_errors.insert(message).second) {
+            errors.push_back(message);
+        }
+    }
+
+    static bool starts_with(const string &value, const string &prefix) {
+        return value.rfind(prefix, 0) == 0;
+    }
+
+    static bool is_builtin_name(const string &name) {
+        static const set<string> builtin_names = {"len", "first", "last", "rest", "push", "puts"};
+        return builtin_names.find(name) != builtin_names.end();
+    }
+
+    void check_type_annotation(const string &annotation) {
+        if (annotation.empty()) {
+            return;
+        }
+
+        if (starts_with(annotation, "&")) {
+            add_error_once("unsupported feature for --emit-llvm: reference type annotations");
+        }
+
+        if (annotation == "array" || starts_with(annotation, "array<") || annotation == "hash") {
+            add_error_once("unsupported feature for --emit-llvm: array and hash type annotations");
+        }
+    }
+
+    void check_statement(Statement *stmt) {
+        if (stmt == nullptr) {
+            return;
+        }
+
+        if (auto *var_stmt = dynamic_cast<VarStatement *>(stmt)) {
+            if (var_stmt->name != nullptr) {
+                check_type_annotation(var_stmt->name->type_annotation);
+            }
+            check_expression(var_stmt->value);
+            return;
+        }
+
+        if (auto *return_stmt = dynamic_cast<ReturnStatement *>(stmt)) {
+            check_expression(return_stmt->return_value);
+            return;
+        }
+
+        if (auto *expression_stmt = dynamic_cast<ExpressionStatement *>(stmt)) {
+            check_expression(expression_stmt->expression);
+            return;
+        }
+
+        if (auto *block_stmt = dynamic_cast<BlockStatement *>(stmt)) {
+            check_block(block_stmt);
+        }
+    }
+
+    void check_block(BlockStatement *block) {
+        if (block == nullptr) {
+            return;
+        }
+
+        for (auto *stmt : block->statements) {
+            check_statement(stmt);
+        }
+    }
+
+    void check_expression(Expression *expression) {
+        if (expression == nullptr) {
+            return;
+        }
+
+        if (auto *ident = dynamic_cast<Identifier *>(expression)) {
+            if (is_builtin_name(ident->value)) {
+                add_error_once("unsupported feature for --emit-llvm: builtins");
+            }
+            check_type_annotation(ident->type_annotation);
+            return;
+        }
+
+        if (dynamic_cast<IntegerLiteral *>(expression) != nullptr ||
+            dynamic_cast<Boolean *>(expression) != nullptr ||
+            dynamic_cast<StringLiteral *>(expression) != nullptr) {
+            return;
+        }
+
+        if (auto *borrow = dynamic_cast<BorrowExpression *>(expression)) {
+            add_error_once("unsupported feature for --emit-llvm: borrow expressions");
+            check_expression(borrow->value);
+            return;
+        }
+
+        if (auto *prefix = dynamic_cast<PrefixExpression *>(expression)) {
+            check_expression(prefix->right);
+            return;
+        }
+
+        if (auto *infix = dynamic_cast<InfixExpression *>(expression)) {
+            check_expression(infix->left);
+            check_expression(infix->right);
+            return;
+        }
+
+        if (auto *if_exp = dynamic_cast<IfExpression *>(expression)) {
+            check_expression(if_exp->condition);
+            check_block(if_exp->consequence);
+            check_block(if_exp->alternative);
+            return;
+        }
+
+        if (auto *while_exp = dynamic_cast<WhileExpression *>(expression)) {
+            check_expression(while_exp->condition);
+            check_block(while_exp->body);
+            return;
+        }
+
+        if (auto *function = dynamic_cast<FunctionLiteral *>(expression)) {
+            for (auto *param : function->parameters) {
+                if (param != nullptr) {
+                    check_type_annotation(param->type_annotation);
+                }
+            }
+            check_type_annotation(function->return_type_annotation);
+            check_block(function->body);
+            return;
+        }
+
+        if (auto *call = dynamic_cast<CallExpression *>(expression)) {
+            if (auto *ident = dynamic_cast<Identifier *>(call->function)) {
+                if (is_builtin_name(ident->value)) {
+                    add_error_once("unsupported feature for --emit-llvm: builtins");
+                }
+            }
+            check_expression(call->function);
+            for (auto *arg : call->arguments) {
+                check_expression(arg);
+            }
+            return;
+        }
+
+        if (auto *assign = dynamic_cast<AssignExpression *>(expression)) {
+            if (dynamic_cast<IndexExpression *>(assign->left) != nullptr) {
+                add_error_once("unsupported feature for --emit-llvm: index assignment");
+            }
+            check_expression(assign->left);
+            check_expression(assign->value);
+            return;
+        }
+
+        if (auto *array = dynamic_cast<ArrayLiteral *>(expression)) {
+            add_error_once("unsupported feature for --emit-llvm: arrays");
+            for (auto *element : array->elements) {
+                check_expression(element);
+            }
+            return;
+        }
+
+        if (auto *index = dynamic_cast<IndexExpression *>(expression)) {
+            add_error_once("unsupported feature for --emit-llvm: index expressions");
+            check_expression(index->left);
+            check_expression(index->index);
+            return;
+        }
+
+        if (auto *hash = dynamic_cast<HashLiteral *>(expression)) {
+            add_error_once("unsupported feature for --emit-llvm: hashes");
+            for (auto &pair : hash->pairs) {
+                check_expression(pair.first);
+                check_expression(pair.second);
+            }
+        }
+    }
+};
+
 class FireflyLlvmTypeInferer {
 public:
     vector<string> errors;
@@ -187,7 +382,7 @@ public:
     map<string, FireflyLlvmFunctionInfo> functions;
 
 private:
-    vector<map<string, FireflyLlvmType>> scopes;
+    vector<map<string, FireflyLlvmSymbol>> scopes;
     bool changed{};
 
     void begin_scope() {
@@ -198,15 +393,16 @@ private:
         scopes.pop_back();
     }
 
-    void define(const string &name, const FireflyLlvmType &type) {
+    void define(const string &name, const FireflyLlvmType &type, bool is_mutable = true) {
         if (scopes.empty()) {
             begin_scope();
         }
         auto &slot = scopes.back()[name];
-        merge_into(slot, type, "variable '" + name + "'");
+        slot.is_mutable = is_mutable;
+        merge_into(slot.type, type, "variable '" + name + "'");
     }
 
-    FireflyLlvmType *resolve(const string &name) {
+    FireflyLlvmSymbol *resolve(const string &name) {
         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
             auto found = it->find(name);
             if (found != it->end()) {
@@ -214,6 +410,43 @@ private:
             }
         }
         return nullptr;
+    }
+
+    FireflyLlvmType type_from_annotation(const string &annotation, const string &context) {
+        if (annotation.empty()) {
+            return FireflyLlvmType::unknown();
+        }
+        if (annotation == "int") {
+            return FireflyLlvmType::int_type();
+        }
+        if (annotation == "bool") {
+            return FireflyLlvmType::bool_type();
+        }
+        if (annotation == "string") {
+            return FireflyLlvmType::string_type();
+        }
+        if (annotation == "void") {
+            return FireflyLlvmType::void_type();
+        }
+
+        errors.push_back("unsupported type annotation for --emit-llvm in " + context + ": " + annotation);
+        return FireflyLlvmType::unknown();
+    }
+
+    vector<FireflyLlvmType> parameter_types(FunctionLiteral *function) {
+        vector<FireflyLlvmType> params;
+        if (function == nullptr) {
+            return params;
+        }
+
+        for (auto *param : function->parameters) {
+            if (param == nullptr) {
+                params.push_back(FireflyLlvmType::unknown());
+                continue;
+            }
+            params.push_back(type_from_annotation(param->type_annotation, "parameter '" + param->value + "'"));
+        }
+        return params;
     }
 
     void collect_top_level_functions(Program *program) {
@@ -232,10 +465,11 @@ private:
                 continue;
             }
 
-            vector<FireflyLlvmType> params(function->parameters.size(), FireflyLlvmType::unknown());
-            FireflyLlvmType type = FireflyLlvmType::function_type(params, FireflyLlvmType::unknown());
+            auto params = parameter_types(function);
+            auto return_type = type_from_annotation(function->return_type_annotation, "function return");
+            FireflyLlvmType type = FireflyLlvmType::function_type(params, return_type);
             functions[var_stmt->name->value] = FireflyLlvmFunctionInfo{var_stmt->name->value, function, type};
-            define(var_stmt->name->value, type);
+            define(var_stmt->name->value, type, var_stmt->is_mutable);
         }
     }
 
@@ -280,12 +514,12 @@ private:
                     errors.push_back("nested function literals are not supported by --emit-llvm yet: " + var_stmt->name->value);
                     return FireflyLlvmType::void_type();
                 }
-                define(var_stmt->name->value, found->second.type);
+                define(var_stmt->name->value, found->second.type, var_stmt->is_mutable);
                 return found->second.type;
             }
 
             auto type = infer_expression(var_stmt->value);
-            define(var_stmt->name->value, type);
+            define(var_stmt->name->value, type, var_stmt->is_mutable);
             return type;
         }
 
@@ -322,9 +556,9 @@ private:
         }
 
         if (auto *ident = dynamic_cast<Identifier *>(expression)) {
-            auto *type = resolve(ident->value);
-            if (type != nullptr) {
-                return *type;
+            auto *symbol = resolve(ident->value);
+            if (symbol != nullptr) {
+                return symbol->type;
             }
             errors.push_back("undefined identifier in LLVM backend: " + ident->value);
             return FireflyLlvmType::unknown();
@@ -365,8 +599,9 @@ private:
         }
 
         if (auto *function = dynamic_cast<FunctionLiteral *>(expression)) {
-            vector<FireflyLlvmType> params(function->parameters.size(), FireflyLlvmType::unknown());
-            return FireflyLlvmType::function_type(params, FireflyLlvmType::unknown());
+            auto params = parameter_types(function);
+            auto return_type = type_from_annotation(function->return_type_annotation, "function return");
+            return FireflyLlvmType::function_type(params, return_type);
         }
 
         if (auto *call = dynamic_cast<CallExpression *>(expression)) {
@@ -402,8 +637,13 @@ private:
             return FireflyLlvmType::unknown();
         }
 
-        merge_into(*target, value, "assignment to '" + ident->value + "'");
-        return *target;
+        if (!target->is_mutable) {
+            errors.push_back("cannot assign to immutable binding: " + ident->value);
+            return target->type;
+        }
+
+        merge_into(target->type, value, "assignment to '" + ident->value + "'");
+        return target->type;
     }
 
     FireflyLlvmType infer_infix_expression(InfixExpression *infix) {
@@ -500,9 +740,9 @@ private:
         }
 
         for (size_t i = 0; i < info.literal->parameters.size(); i++) {
-            auto *param_type = resolve(info.literal->parameters[i]->value);
-            if (param_type != nullptr) {
-                merge_into(info.type.params[i], *param_type, "parameter " + info.literal->parameters[i]->value);
+            auto *param_symbol = resolve(info.literal->parameters[i]->value);
+            if (param_symbol != nullptr) {
+                merge_into(info.type.params[i], param_symbol->type, "parameter " + info.literal->parameters[i]->value);
             }
         }
         end_scope();
@@ -579,6 +819,7 @@ struct FireflyLlvmValue {
 struct FireflyLlvmVariable {
     llvm::Value *storage{};
     FireflyLlvmType type;
+    bool is_mutable{true};
 };
 
 class FireflyLlvmCodegen {
@@ -589,6 +830,12 @@ public:
           builder(make_unique<llvm::IRBuilder<>>(*context)) {}
 
     bool generate(Program *program) {
+        FireflyLlvmFeatureChecker feature_checker;
+        if (!feature_checker.check(program)) {
+            errors = std::move(feature_checker.errors);
+            return false;
+        }
+
         FireflyLlvmTypeInferer inferer;
         inferer.infer(program);
         functions = std::move(inferer.functions);
@@ -742,8 +989,8 @@ private:
         variable_scopes.pop_back();
     }
 
-    void define_variable(const string &name, llvm::Value *storage, const FireflyLlvmType &type) {
-        variable_scopes.back()[name] = FireflyLlvmVariable{storage, type};
+    void define_variable(const string &name, llvm::Value *storage, const FireflyLlvmType &type, bool is_mutable = true) {
+        variable_scopes.back()[name] = FireflyLlvmVariable{storage, type, is_mutable};
     }
 
     FireflyLlvmVariable *resolve_variable(const string &name) {
@@ -824,7 +1071,7 @@ private:
         auto value = emit_expression(stmt->value);
         auto *alloca = create_entry_alloca(current_function, stmt->name->value, value.type);
         builder->CreateStore(value.value, alloca);
-        define_variable(stmt->name->value, alloca, value.type);
+        define_variable(stmt->name->value, alloca, value.type, stmt->is_mutable);
         return value;
     }
 
@@ -912,6 +1159,11 @@ private:
         if (variable == nullptr) {
             errors.push_back("undefined identifier in LLVM backend assignment: " + ident->value);
             return FireflyLlvmValue{nullptr, FireflyLlvmType::unknown()};
+        }
+
+        if (!variable->is_mutable) {
+            errors.push_back("cannot assign to immutable binding: " + ident->value);
+            return FireflyLlvmValue{nullptr, variable->type};
         }
 
         auto value = emit_expression(assign->value);

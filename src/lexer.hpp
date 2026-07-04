@@ -170,7 +170,7 @@ Token next_token(Lexer *l) {
                 string literal = string(1, ch) + string(1, l->ch);
                 tok = Token{.Literal = literal, .type = TokenType::AND};
             } else {
-                tok = new_token(l->ch, TokenType::ILLEGAL);
+                tok = new_token(l->ch, TokenType::AMP);
             }
             break;
         case '|' :

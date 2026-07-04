@@ -203,6 +203,7 @@ inline Identifier *clone_identifier(Identifier *ident) {
     auto *clone = new Identifier();
     clone->token = ident->token;
     clone->value = ident->value;
+    clone->type_annotation = ident->type_annotation;
     return clone;
 }
 
@@ -260,6 +261,14 @@ inline Expression *clone_expression(Expression *expression) {
         return clone;
     }
 
+    if (auto *borrow = dynamic_cast<BorrowExpression *>(expression)) {
+        auto *clone = new BorrowExpression();
+        clone->token = borrow->token;
+        clone->is_mutable = borrow->is_mutable;
+        clone->value = clone_expression(borrow->value);
+        return clone;
+    }
+
     if (auto *infix = dynamic_cast<InfixExpression *>(expression)) {
         auto *clone = new InfixExpression();
         clone->token = infix->token;
@@ -289,6 +298,7 @@ inline Expression *clone_expression(Expression *expression) {
     if (auto *function = dynamic_cast<FunctionLiteral *>(expression)) {
         auto *clone = new FunctionLiteral();
         clone->token = function->token;
+        clone->return_type_annotation = function->return_type_annotation;
         for (auto *param : function->parameters) {
             clone->parameters.push_back(clone_identifier(param));
         }
@@ -357,6 +367,7 @@ inline Statement *clone_statement(Statement *statement) {
         clone->token = var_stmt->token;
         clone->name = clone_identifier(var_stmt->name);
         clone->value = clone_expression(var_stmt->value);
+        clone->is_mutable = var_stmt->is_mutable;
         return clone;
     }
 

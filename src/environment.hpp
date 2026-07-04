@@ -11,9 +11,20 @@
 
 using namespace std;
 
+enum class EnvironmentAssignResult {
+    OK,
+    NOT_FOUND,
+    IMMUTABLE
+};
+
+struct EnvironmentBinding {
+    ObjectPtr value;
+    bool is_mutable{true};
+};
+
 class Environment : public enable_shared_from_this<Environment> {
 public:
-    map<string, ObjectPtr> store;
+    map<string, EnvironmentBinding> store;
     shared_ptr<Environment> outer;
 
     Environment() = default;
@@ -23,7 +34,7 @@ public:
     ObjectPtr get(const string &name) const {
         auto it = store.find(name);
         if (it != store.end()) {
-            return it->second;
+            return it->second.value;
         }
 
         if (outer != nullptr) {
@@ -33,23 +44,27 @@ public:
         return nullptr;
     }
 
-    ObjectPtr set(const string &name, ObjectPtr value) {
-        store[name] = std::move(value);
-        return store[name];
+    ObjectPtr set(const string &name, ObjectPtr value, bool is_mutable = true) {
+        auto stored = value;
+        store[name] = EnvironmentBinding{std::move(value), is_mutable};
+        return stored;
     }
 
-    bool assign(const string &name, ObjectPtr value) {
+    EnvironmentAssignResult assign(const string &name, ObjectPtr value) {
         auto it = store.find(name);
         if (it != store.end()) {
-            it->second = std::move(value);
-            return true;
+            if (!it->second.is_mutable) {
+                return EnvironmentAssignResult::IMMUTABLE;
+            }
+            it->second.value = std::move(value);
+            return EnvironmentAssignResult::OK;
         }
 
         if (outer != nullptr) {
             return outer->assign(name, std::move(value));
         }
 
-        return false;
+        return EnvironmentAssignResult::NOT_FOUND;
     }
 };
 

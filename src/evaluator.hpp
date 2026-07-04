@@ -551,8 +551,12 @@ inline ObjectPtr eval_assign_expression(AssignExpression *expression, const shar
     }
 
     if (auto *ident = dynamic_cast<Identifier *>(expression->left)) {
-        if (!env->assign(ident->value, value)) {
+        auto result = env->assign(ident->value, value);
+        if (result == EnvironmentAssignResult::NOT_FOUND) {
             return new_error("identifier not found: " + ident->value);
+        }
+        if (result == EnvironmentAssignResult::IMMUTABLE) {
+            return new_error("cannot assign to immutable binding: " + ident->value);
         }
         return value;
     }
@@ -604,7 +608,7 @@ inline ObjectPtr eval(Node *node, const shared_ptr<Environment> &env) {
         if (is_error(value)) {
             return value;
         }
-        env->set(stmt->name->value, value);
+        env->set(stmt->name->value, value, stmt->is_mutable);
         return value;
     }
 
@@ -638,6 +642,10 @@ inline ObjectPtr eval(Node *node, const shared_ptr<Environment> &env) {
             return right;
         }
         return eval_prefix_expression(expression->op, right);
+    }
+
+    if (auto *expression = dynamic_cast<BorrowExpression *>(node)) {
+        return eval(expression->value, env);
     }
 
     if (auto *expression = dynamic_cast<InfixExpression *>(node)) {

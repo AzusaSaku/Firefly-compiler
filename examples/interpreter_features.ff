@@ -1,0 +1,13 @@
+var numbers: array<int> = [1, 2, 3];
+
+if (true) {
+  let first_ref: &array<int> = &numbers;
+  first_ref[0]
+};
+
+numbers[0] = numbers[0] + 10;
+
+var user = {"name": "firefly", "age": 1};
+user["age"] = user["age"] + numbers[1];
+
+user["age"];

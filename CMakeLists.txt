@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.26)
-project(Firefly_compiler)
+project(Firefly VERSION 0.1.0)
+
+include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -15,7 +17,7 @@ endif ()
 
 find_package(LLVM CONFIG REQUIRED)
 
-add_executable(Firefly_compiler src/main.cpp
+add_executable(firefly src/main.cpp
         src/token.hpp
         src/lexer.hpp
         src/repl.hpp
@@ -29,14 +31,17 @@ add_executable(Firefly_compiler src/main.cpp
         src/llvm_codegen.hpp
 )
 
-target_include_directories(Firefly_compiler SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+target_include_directories(firefly SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
 separate_arguments(LLVM_DEFINITION_OPTIONS NATIVE_COMMAND "${LLVM_DEFINITIONS}")
-target_compile_options(Firefly_compiler PRIVATE ${LLVM_DEFINITION_OPTIONS})
+target_compile_options(firefly PRIVATE ${LLVM_DEFINITION_OPTIONS})
 if (MSVC)
-    target_compile_options(Firefly_compiler PRIVATE /utf-8)
+    target_compile_options(firefly PRIVATE /utf-8)
 endif ()
 if (LLVM_TOOLS_BINARY_DIR)
-    target_compile_definitions(Firefly_compiler PRIVATE FIREFLY_LLVM_TOOLS_DIR="${LLVM_TOOLS_BINARY_DIR}")
+    target_compile_definitions(firefly PRIVATE FIREFLY_LLVM_TOOLS_DIR="${LLVM_TOOLS_BINARY_DIR}")
 endif ()
+target_compile_definitions(firefly PRIVATE FIREFLY_VERSION="${PROJECT_VERSION}")
 llvm_map_components_to_libnames(LLVM_LIBS support core)
-target_link_libraries(Firefly_compiler PRIVATE ${LLVM_LIBS})
+target_link_libraries(firefly PRIVATE ${LLVM_LIBS})
+
+install(TARGETS firefly RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

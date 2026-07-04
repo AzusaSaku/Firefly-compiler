@@ -66,10 +66,14 @@ class Identifier : public Expression {
 public:
     Token token;
     string value;
+    string type_annotation;
     string token_literal() override {
         return token.Literal;
     }
     string to_string() override {
+        if (!type_annotation.empty()) {
+            return value + ": " + type_annotation;
+        }
         return value;
     }
 };
@@ -120,6 +124,32 @@ public:
             out << right->to_string();
         }
         out << ")";
+        return out.str();
+    }
+};
+
+// 借用表达式
+class BorrowExpression : public Expression {
+public:
+    Token token;
+    bool is_mutable{};
+    Expression *value{};
+    ~BorrowExpression() override {
+        delete value;
+    }
+
+    string token_literal() override {
+        return token.Literal;
+    }
+    string to_string() override {
+        stringstream out;
+        out << "&";
+        if (is_mutable) {
+            out << "var ";
+        }
+        if (value != nullptr) {
+            out << value->to_string();
+        }
         return out.str();
     }
 };
@@ -259,6 +289,7 @@ class FunctionLiteral : public Expression {
 public:
     Token token;
     vector<Identifier *> parameters;
+    string return_type_annotation;
     BlockStatement *body{};
     ~FunctionLiteral() override {
         for (auto *param : parameters) {
@@ -279,7 +310,11 @@ public:
             }
             out << parameters[i]->to_string();
         }
-        out << ") ";
+        out << ")";
+        if (!return_type_annotation.empty()) {
+            out << ": " << return_type_annotation;
+        }
+        out << " ";
         if (body != nullptr) {
             out << body->to_string();
         }
@@ -435,12 +470,13 @@ public:
     }
 };
 
-// VAR语句
+// 变量绑定语句
 class VarStatement : public Statement {
 public:
     Token token;
     Identifier *name{};
     Expression *value{};
+    bool is_mutable{true};
     ~VarStatement() override {
         delete name;
         delete value;

@@ -12,12 +12,12 @@ using namespace std;
 enum class TokenType {
     ILLEGAL = 0, END,
     IDENT, INT, STRING, // 标识符和字面量
-    ASSIGN, PLUS, MINUS, ASTERISK, SLASH, BANG, LT, GT, // 运算符 -> = + - * / ! < >
+    ASSIGN, PLUS, MINUS, ASTERISK, SLASH, BANG, AMP, LT, GT, // 运算符 -> = + - * / ! & < >
     LE, GE, AND, OR, // 复合运算符 -> <= >= && ||
     COMMA, SEMICOLON, COLON, // 分隔符 -> , ; :
     LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET, // 括号 -> ( ) { } [ ]
     EQ, NOT_EQ, // 分支比较 -> == !=
-    FUNC, VAR, TRUE, FALSE, IF, ELSE, WHILE, RETURN // 关键字 -> func var true false if else while return
+    FUNC, LET, VAR, TRUE, FALSE, IF, ELSE, WHILE, RETURN // 关键字 -> func let var true false if else while return
 };
 
 struct Token {
@@ -28,6 +28,7 @@ struct Token {
 // 关键字
 inline const map<string, TokenType, less<>> keywords = {
         {"func",   TokenType::FUNC},
+        {"let",    TokenType::LET},
         {"var",    TokenType::VAR},
         {"true",   TokenType::TRUE},
         {"false",  TokenType::FALSE},
@@ -69,6 +70,8 @@ inline string token_type_to_string(TokenType type) {
             return "SLASH";
         case TokenType::BANG:
             return "BANG";
+        case TokenType::AMP:
+            return "AMP";
         case TokenType::LT:
             return "LT";
         case TokenType::GT:
@@ -105,6 +108,8 @@ inline string token_type_to_string(TokenType type) {
             return "NOT_EQ";
         case TokenType::FUNC:
             return "FUNC";
+        case TokenType::LET:
+            return "LET";
         case TokenType::VAR:
             return "VAR";
         case TokenType::TRUE:
