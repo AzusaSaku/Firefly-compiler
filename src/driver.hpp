@@ -280,7 +280,7 @@ inline int link_native_executable(const filesystem::path &object_path,
     string command = quote_command_path(linker) +
                      " " +
                      quote_command_path(object_path) +
-                     " -o " +
+                     " -no-pie -o " +
                      quote_command_path(exe_path);
     return run_command(command, err);
 #endif
