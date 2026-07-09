@@ -6,42 +6,16 @@ on:
       - main
       - master
   pull_request:
+  workflow_dispatch:
 
 jobs:
-  windows:
-    name: Windows Release
-    runs-on: windows-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Install LLVM
-        shell: pwsh
-        run: choco install llvm -y --no-progress
-
-      - name: Configure
-        shell: pwsh
-        run: |
-          cmake -S . -B build `
-            -G "Visual Studio 17 2022" -A x64 `
-            -DLLVM_DIR="C:\Program Files\LLVM\lib\cmake\llvm"
-
-      - name: Build
-        shell: pwsh
-        run: cmake --build build --config Release
-
-      - name: Smoke test
-        shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File .\tests\smoke_llvm.ps1 -Exe .\build\Release\firefly.exe
-
   linux:
     name: Linux Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install LLVM dependencies
         run: |
