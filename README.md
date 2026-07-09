@@ -5,136 +5,80 @@
 
 ![Firefly hero](assets/firefly-hero.png)
 
+Firefly 0.1.0 is a small C++ language implementation with a REPL interpreter,
+a static semantic checker, and an LLVM backend for a documented compiled
+subset.
+
 ## Contents
 
-- [Introduction](#introduction)
-- [Compile](#compile)
-- [Usage](#usage)
-- [Examples](#examples)
-- [Release Check](#release-check)
+- [Quick Start](#quick-start)
+- [Install And Build From Source](#install-and-build-from-source)
+- [Project Structure](#project-structure)
+- [Interpreter Mode](#interpreter-mode)
+- [Compiler Mode](#compiler-mode)
+- [Feature Matrix](#feature-matrix)
+- [Release Packages](#release-packages)
+- [Testing](#testing)
+- [Limitations](#limitations)
 
-## Introduction
+## Quick Start
 
-Firefly is a small language implementation written in C++. 
-
-```firefly
-let fib = func(n: int): int {
-  if (n < 2) {
-    n
-  } else {
-    fib(n - 1) + fib(n - 2)
-  }
-};
-
-fib(10);
-```
-
-Use `let` for immutable bindings and `var` for mutable bindings:
-
-```firefly
-let answer = 42;
-var total = answer;
-total = total + 1;
-```
-
-Assigning a new value to a `let` binding is an error. `var` is the spelling for
-values that are meant to change.
-
-Bindings and functions can carry explicit type annotations:
-
-```firefly
-let answer: int = 42;
-
-let add_one = func(n: int): int {
-  n + 1
-};
-```
-
-Supported annotation names are `int`, `bool`, `string`, `array<T>`, `hash`,
-and `void`.
-
-Arrays are statically checked as homogeneous values. Firefly infers element
-types from array literals and uses them for indexing:
-
-```firefly
-let values: array<int> = [1, 2, 3];
-let first: int = values[0];
-
-let mixed = [1, true]; // semantic error: array element types differ
-```
-
-Borrow syntax is available in the semantic checker. Firefly uses `&T` for an
-immutable reference and `&var T` for a mutable reference, matching the
-`let`/`var` spelling instead of using a separate `mut` keyword:
-
-```firefly
-let values: array<int> = [1, 2, 3];
-let borrowed: &array<int> = &values;
-
-var editable: array<int> = [1, 2, 3];
-let editable_ref: &var array<int> = &var editable;
-```
-
-Borrowed function parameters can be written with the same type syntax:
-
-```firefly
-let first = func(xs: &array<int>): int {
-  xs[0]
-};
-
-first(&values);
-```
-
-References are typed and do not move the original value. Shared references can
-coexist with other shared references. A mutable reference is exclusive: while it
-is alive, the original value cannot be read, moved, assigned, or borrowed again.
-While any reference is alive, the original value cannot be moved or assigned.
-References created inside a block are released when that block ends.
-
-File execution also runs a small static semantic pass before evaluating or
-emitting LLVM IR. It catches undefined names, assigning to `let`, assigning a
-different type into an existing variable, non-boolean `if`/`while` conditions,
-basic operator type mismatches, annotated binding mismatches, function argument
-type mismatches, function return type mismatches, array element mismatches, and
-borrow conflicts.
-
-Firefly also checks ownership moves. `int`, `bool`, and function values are
-Copy. `string`, `array`, and `hash` values are treated as owned values: binding
-them to another name or passing them to a function moves the value, and using the
-old name afterwards is a semantic error.
-
-```firefly
-let data = [1, 2];
-let moved = data;
-
-data[0]; // semantic error: use of moved value: data
-```
-
-## Compile
-
-Firefly uses LLVM through CMake's `find_package(LLVM CONFIG REQUIRED)`.
-
-If LLVM is available through your normal CMake package search path:
+Start the REPL:
 
 ```bash
-cmake -S . -B build
-cmake --build build
+firefly
 ```
 
-With vcpkg manifest mode, configure with the vcpkg toolchain file:
+Evaluate a file with the interpreter:
+
+```bash
+firefly --eval examples/interpreter_features.ff
+```
+
+Emit LLVM IR for the compiled subset:
+
+```bash
+firefly --emit-llvm examples/llvm_basic.ff
+```
+
+Build a native executable:
+
+```bash
+firefly --build examples/llvm_basic.ff
+```
+
+Check the installed version:
+
+```bash
+firefly --version
+```
+
+## Install And Build From Source
+
+Firefly builds one executable named `firefly`. It requires CMake, a C++20
+compiler, and LLVM development files discoverable by CMake.
+
+Configure and build with LLVM available on the normal CMake search path:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+```
+
+With vcpkg manifest mode:
 
 ```powershell
 cmake -S . -B build `
   -DCMAKE_TOOLCHAIN_FILE=D:\vcpkg\scripts\buildsystems\vcpkg.cmake
-cmake --build build
+cmake --build build --config Release
 ```
 
-With a vcpkg classic-mode LLVM install, pass `LLVM_DIR` explicitly:
+With a vcpkg classic-mode LLVM install:
 
 ```powershell
 cmake -S . -B build `
   -DLLVM_DIR=D:\vcpkg\installed\x64-windows-release\share\llvm
-cmake --build build
+cmake --build build --config Release
 ```
 
 Install the built executable:
@@ -146,48 +90,50 @@ cmake --install build --config Release --prefix dist
 The maintainer's local fallback path is `D:/vcpkg/installed/x64-windows-release`.
 CMake uses it only when neither `LLVM_DIR` nor `CMAKE_TOOLCHAIN_FILE` is set.
 
-Run the current LLVM smoke tests after building:
+## Project Structure
 
-```powershell
-.\tests\smoke_llvm.ps1 -Exe .\build\Debug\firefly.exe
-```
+Firefly is organized around four conceptual layers:
 
-On Linux:
+- Frontend: `src/token.hpp`, `src/lexer.hpp`, `src/parser.hpp`, and
+  `src/ast.hpp` turn source text into an AST.
+- Semantic checker: `src/semantic.hpp` performs static checks shared by file
+  evaluation and LLVM compilation.
+- Interpreter: `src/object.hpp`, `src/environment.hpp`, `src/evaluator.hpp`,
+  and `src/repl.hpp` implement runtime objects, lexical environments,
+  tree-walking evaluation, and the interactive REPL.
+- Compiler and CLI: `src/llvm_codegen.hpp` emits LLVM IR for the compiled
+  subset, `src/driver.hpp` connects frontend/semantic/compiler/runtime paths,
+  and `src/main.cpp` owns command-line argument parsing.
 
-```bash
-bash ./tests/smoke_llvm.sh ./build/firefly
-```
+## Interpreter Mode
 
-On Windows Debug builds, the executable is usually here:
-
-```powershell
-.\build\Debug\firefly.exe
-```
-
-On Linux/macOS or single-configuration generators:
-
-```bash
-./build/firefly
-```
-
-## Usage
-
-### REPL interpreter
-
-Start the interactive interpreter:
-
-```bash
-firefly
-```
-
-The REPL evaluates Firefly code immediately and keeps variables and functions
-alive for the current session:
+The interpreter is the broadest Firefly execution path. It supports `let`,
+`var`, integers, booleans, strings, arrays, hashes, assignment, index
+assignment, `if`, `while`, functions, calls, `return`, borrow syntax, ownership
+checks, and builtins such as `len`, `first`, `last`, `rest`, `push`, and
+`puts`.
 
 ```firefly
->> let x = 10;
-10
->> x + 5;
-15
+var numbers: array<int> = [1, 2, 3];
+numbers[0] = numbers[0] + 10;
+
+var user = {"name": "firefly", "age": 1};
+user["age"] = user["age"] + numbers[1];
+
+user["age"];
+```
+
+Run a file:
+
+```bash
+firefly main.ff
+firefly --eval main.ff
+```
+
+Print the parsed AST:
+
+```bash
+firefly --ast main.ff
 ```
 
 REPL commands:
@@ -199,33 +145,11 @@ REPL commands:
 :quit  exit REPL
 ```
 
-### File interpreter
+## Compiler Mode
 
-Evaluate a source file with the interpreter:
-
-```bash
-firefly main.ff
-```
-
-Equivalent form:
-
-```bash
-firefly --eval main.ff
-```
-
-The interpreter supports the dynamic Firefly features, including `let`, `var`,
-arrays, hashes, assignment, while, functions, calls, strings, and builtins.
-
-When evaluating a file, Firefly first runs the semantic checker. The REPL uses
-the interactive interpreter directly.
-
-Print the AST:
-
-```bash
-firefly --ast main.ff
-```
-
-### LLVM compiler
+The LLVM backend supports a smaller compiled subset: integers, booleans,
+strings, `let`, `var`, identifier assignment, `if`, `while`, named functions,
+calls, `return`, primitive type annotations, and `puts("text")`.
 
 Emit LLVM IR:
 
@@ -233,88 +157,103 @@ Emit LLVM IR:
 firefly --emit-llvm main.ff
 ```
 
-This writes `main.ll` next to the input file.
-
 Emit a native object file:
 
 ```bash
 firefly --emit-obj main.ff
 ```
 
-This writes `main.obj` on Windows and `main.o` on Linux.
-
 Build a native executable:
 
 ```bash
 firefly --build main.ff
+firefly --compile main.ff
 ```
 
-This writes `main.exe` on Windows and `main` on Linux. `--build` uses LLVM's
-`llc` plus `lld-link` on Windows, and `llc` plus `clang`/`cc` on Linux.
-`--compile` is an alias for `--build`.
+`--compile` is an alias for `--build`. Native output uses LLVM `llc`. Windows
+builds use `lld-link`; Linux builds use `clang` or `cc`.
 
-The LLVM compiler targets the statically compiled subset: integers, booleans,
-strings, `let`, `var`, assignment, `if`, `while`, functions, calls, `return`,
-and primitive type annotations. `let` bindings are immutable in both the
-interpreter and LLVM path, and a shared semantic pass rejects basic type and
-use-after-move errors before IR generation. Arrays, hashes, references,
-closures, builtins, and runtime printing run through the interpreter. If one
-of those interpreter-only features reaches `--emit-llvm`, Firefly rejects it
-before IR generation with an `llvm error: unsupported feature for --emit-llvm`
-diagnostic.
+Compiled `puts("text")` lowers to the host C runtime `puts` function. The
+runtime boundary is documented in [`docs/runtime.md`](docs/runtime.md), and the
+LLVM builtin matrix is documented in
+[`docs/llvm-builtins.md`](docs/llvm-builtins.md).
 
-Show CLI help:
+## Feature Matrix
+
+| Feature | Interpreter | LLVM compiler |
+| --- | --- | --- |
+| Integers, booleans, strings | Yes | Yes |
+| `let`, `var`, assignment | Yes | Yes |
+| `if`, `while` | Yes | Yes |
+| Functions and calls | Yes | Named compiled functions |
+| `return` | Yes | Yes |
+| Primitive type annotations | Yes | Yes |
+| Arrays and hashes | Yes | No |
+| Index expressions and assignment | Yes | No |
+| Borrow expressions and reference annotations | Semantic/file mode | No |
+| Builtins | `len`, `first`, `last`, `rest`, `push`, `puts` | `puts("text")` only |
+| Native executable build | Not applicable | Host platform only |
+
+Unsupported LLVM features fail with deterministic diagnostics before or during
+LLVM lowering. The full support matrix is in
+[`docs/llvm-support.md`](docs/llvm-support.md).
+
+## Release Packages
+
+Release packaging is script-driven:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\package_windows.ps1 `
+  -Exe .\build\Release\firefly.exe
+```
 
 ```bash
-firefly --help
+bash ./scripts/package_linux.sh --exe ./build/firefly
 ```
 
-Show the version:
+Windows packages:
 
-```bash
-firefly --version
-```
+- Lightweight: `bin/firefly.exe`, docs, examples, README, and LICENSE.
+- Full: lightweight contents plus `llc.exe`, `lld-link.exe`, `z.dll`,
+  `zstd.dll`, and `licenses/` notices.
 
-Example `.ff` file:
+Linux packages must be built on Linux. Do not reuse Windows binaries for Linux.
 
-```firefly
-let limit: int = 5;
-var i = 0;
-var sum = 0;
+Windows packages require the Microsoft Visual C++ Redistributable 2015-2022 x64
+unless a package explicitly bundles the runtime DLLs.
 
-while (i < limit) {
-  sum = sum + i;
-  i = i + 1;
-};
-
-var data = [1, 2, 3];
-data[0] = data[0] + 10;
-
-var user = {"name": "firefly", "age": 1};
-user["age"] = user["age"] + 1;
-
-sum;
-```
-
-## Examples
-
-Run the interpreter feature example:
-
-```bash
-firefly --eval examples/interpreter_features.ff
-```
-
-Emit LLVM IR from the compiled-subset example:
-
-```bash
-firefly --emit-llvm examples/llvm_basic.ff
-```
-
-The interpreter example uses arrays, hashes, assignment, and borrow checking.
-The LLVM example uses only the compiled subset.
-
-## Release Check
-
-Release smoke commands for Windows and Linux are documented in
+Release commands and package checks are documented in
 [`docs/release.md`](docs/release.md).
 
+## Testing
+
+Run the smoke tests after building:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tests\smoke_llvm.ps1 -Exe .\build\Release\firefly.exe
+```
+
+```bash
+bash ./tests/smoke_llvm.sh ./build/firefly
+```
+
+The smoke suite is grouped by release/package smoke, interpreter behavior, LLVM
+IR generation, native build output, interpreter/native consistency, parser and
+semantic errors, and unsupported LLVM diagnostics. See
+[`tests/README.md`](tests/README.md).
+
+GitHub Actions builds and smoke-tests Windows and Linux Release configurations
+on pushes and pull requests.
+
+## Limitations
+
+Firefly 0.1.0 is an early formal release, not a mature production compiler.
+
+- Native builds target the host platform; cross-compilation is not supported.
+- The LLVM backend supports a compiled subset, not the full interpreter
+  language.
+- Arrays, hashes, references, closures, and most builtins are interpreter-only.
+- There is no bytecode VM, garbage collector, trait system, generic system, or
+  full standard library.
+- Native build modes depend on external LLVM/system tools unless those tools are
+  bundled in a full package.

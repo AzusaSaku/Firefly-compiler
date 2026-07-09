@@ -47,3 +47,12 @@ compile_commands.json
 
 # vcpkg manifest install directory
 vcpkg_installed/
+
+# Release artifacts
+artifacts/
+
+# Local release-only notice material
+licenses/
+
+# Local documentation drafts
+docs/

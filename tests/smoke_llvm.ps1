@@ -87,13 +87,67 @@ function Write-Utf8NoBom {
     [System.IO.File]::WriteAllText($Path, $Value, $encoding)
 }
 
+function Write-Section {
+    param([string]$Name)
+    Write-Output ""
+    Write-Output "== $Name =="
+}
+
+function Assert-Interpreter-Native-Marker {
+    param(
+        [string]$Name,
+        [string]$Source,
+        [string]$Marker
+    )
+
+    $file = Join-Path $tmp "$Name.ff"
+    Write-Utf8NoBom $file $Source
+
+    $evalOutput = & $compiler --eval $file | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Name eval failed"
+    }
+    Assert-Contains "$Name eval marker" $evalOutput ([regex]::Escape($Marker))
+
+    & $compiler --build $file | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Name build failed"
+    }
+
+    $exe = Join-Path $tmp "$Name.exe"
+    if (!(Test-Path $exe)) {
+        throw "$Name build failed: executable was not created"
+    }
+
+    $nativeOutput = & $exe | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Name executable failed with exit code $LASTEXITCODE"
+    }
+    Assert-Contains "$Name native marker" $nativeOutput ([regex]::Escape($Marker))
+}
+
 $compiler = Find-FireflyCompiler $Exe
 $repoRoot = Split-Path $PSScriptRoot -Parent
+
+Write-Section "release/package smoke"
 $versionOutput = & $compiler --version
 if ($LASTEXITCODE -ne 0) {
     throw "version command failed"
 }
-Assert-Contains "version command" $versionOutput "^firefly "
+Assert-Equal "version command" $versionOutput "firefly 0.1.0"
+
+$helpOutput = & $compiler --help | Out-String
+if ($LASTEXITCODE -ne 0) {
+    throw "help command failed"
+}
+Assert-Contains "help eval command" $helpOutput "--eval <file>"
+Assert-Contains "help ast command" $helpOutput "--ast <file>"
+Assert-Contains "help emit llvm command" $helpOutput "--emit-llvm <file>"
+Assert-Contains "help emit obj command" $helpOutput "--emit-obj <file>"
+Assert-Contains "help build command" $helpOutput "--build <file>"
+Assert-Contains "help compile alias" $helpOutput "--compile <file>"
+Assert-Contains "help version command" $helpOutput "--version"
+Assert-Contains "help command" $helpOutput "--help"
 
 $tmp = Join-Path $PSScriptRoot ".tmp"
 if (Test-Path $tmp) {
@@ -101,6 +155,7 @@ if (Test-Path $tmp) {
 }
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 
+Write-Section "interpreter behavior"
 $interpreterExampleFile = Join-Path $repoRoot "examples\interpreter_features.ff"
 $evalInterpreterExample = & $compiler --eval $interpreterExampleFile
 if ($LASTEXITCODE -ne 0) {
@@ -117,6 +172,8 @@ Assert-Equal "LLVM example eval" $evalLlvmExample "8"
 
 $llvmExampleTmpFile = Join-Path $tmp "example_llvm_basic.ff"
 Copy-Item -LiteralPath $llvmExampleFile -Destination $llvmExampleTmpFile
+
+Write-Section "LLVM IR generation"
 & $compiler --emit-llvm $llvmExampleTmpFile | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw "LLVM example emit-llvm failed"
@@ -313,6 +370,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 Assert-Equal "borrow scope eval" $evalBorrowScope "1"
 
+Write-Section "native object/executable build"
 & $compiler --emit-obj $loopFile | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw "loop emit-obj failed"
@@ -390,6 +448,109 @@ if ($LASTEXITCODE -ne 0) {
 $boolIr = Get-Content (Join-Path $tmp "bool_assign.ll") -Raw
 Assert-Contains "bool IR" $boolIr "store i1"
 Assert-Contains "bool IR" $boolIr "nottmp"
+
+$printSource = @'
+puts("firefly native");
+0;
+'@
+$printFile = Join-Path $tmp "print_string.ff"
+Write-Utf8NoBom $printFile $printSource
+
+$evalPrint = & $compiler --eval $printFile | Out-String
+if ($LASTEXITCODE -ne 0) {
+    throw "print eval failed"
+}
+Assert-Contains "print eval output" $evalPrint "firefly native"
+
+& $compiler --emit-llvm $printFile | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "print emit-llvm failed"
+}
+$printIr = Get-Content (Join-Path $tmp "print_string.ll") -Raw
+Assert-Contains "print IR declaration" $printIr "declare i32 @puts"
+Assert-Contains "print IR call" $printIr "call i32 @puts"
+
+& $compiler --build $printFile | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "print build failed"
+}
+$printExe = Join-Path $tmp "print_string.exe"
+if (!(Test-Path $printExe)) {
+    throw "print build failed: executable was not created"
+}
+$nativePrint = & $printExe | Out-String
+if ($LASTEXITCODE -ne 0) {
+    throw "print executable failed with exit code $LASTEXITCODE"
+}
+Assert-Contains "print executable output" $nativePrint "firefly native"
+
+Write-Section "interpreter/native consistency"
+Assert-Interpreter-Native-Marker "consistency_arithmetic" @'
+if (1 + 2 * 3 == 7) {
+  puts("consistency arithmetic")
+} else {
+  puts("bad arithmetic")
+};
+'@ "consistency arithmetic"
+
+Assert-Interpreter-Native-Marker "consistency_if" @'
+if (true) {
+  puts("consistency if")
+} else {
+  puts("bad if")
+};
+'@ "consistency if"
+
+Assert-Interpreter-Native-Marker "consistency_while" @'
+var i = 0;
+var sum = 0;
+
+while (i < 5) {
+  sum = sum + i;
+  i = i + 1;
+};
+
+if (sum == 10) {
+  puts("consistency while")
+} else {
+  puts("bad while")
+};
+'@ "consistency while"
+
+Assert-Interpreter-Native-Marker "consistency_function" @'
+let inc = func(n: int): int {
+  n + 1
+};
+
+if (inc(41) == 42) {
+  puts("consistency function")
+} else {
+  puts("bad function")
+};
+'@ "consistency function"
+
+Assert-Interpreter-Native-Marker "consistency_printing" @'
+puts("consistency printing");
+'@ "consistency printing"
+
+Write-Section "parser and semantic errors"
+$parserLocationSource = @'
+let = 1;
+'@
+$parserLocationFile = Join-Path $tmp "parser_location.ff"
+Write-Utf8NoBom $parserLocationFile $parserLocationSource
+
+Assert-Fails-Contains "parser diagnostic location" @($compiler, "--eval", $parserLocationFile) "parser error: expected next token to be IDENT, got ASSIGN instead at line 1, column 5"
+
+$semanticLocationSource = @'
+if (1) {
+  1
+};
+'@
+$semanticLocationFile = Join-Path $tmp "semantic_location.ff"
+Write-Utf8NoBom $semanticLocationFile $semanticLocationSource
+
+Assert-Fails-Contains "semantic diagnostic location" @($compiler, "--eval", $semanticLocationFile) "semantic error: if condition must be bool, got int at line 1, column 1"
 
 $immutableSource = @'
 let x = 1;
@@ -581,6 +742,7 @@ Write-Utf8NoBom $callMoveFile $callMoveSource
 
 Assert-Fails-Contains "call move eval" @($compiler, "--eval", $callMoveFile) "semantic error: use of moved value: data"
 
+Write-Section "unsupported LLVM diagnostics"
 $llvmArrayUnsupportedSource = @'
 let values = [1, 2];
 values[0];
@@ -624,6 +786,39 @@ if ($LASTEXITCODE -ne 0) {
 Assert-Equal "llvm borrow boundary eval" $evalLlvmBorrowUnsupported "firefly"
 Assert-Fails-Contains "llvm borrow unsupported" @($compiler, "--emit-llvm", $llvmBorrowUnsupportedFile) "llvm error: unsupported feature for --emit-llvm: borrow expressions"
 
+$llvmReferenceAnnotationUnsupportedSource = @'
+let take = func(value: &string): int {
+  1
+};
+
+0;
+'@
+$llvmReferenceAnnotationUnsupportedFile = Join-Path $tmp "llvm_reference_annotation_unsupported.ff"
+Write-Utf8NoBom $llvmReferenceAnnotationUnsupportedFile $llvmReferenceAnnotationUnsupportedSource
+
+Assert-Fails-Contains "llvm reference annotation unsupported" @($compiler, "--emit-llvm", $llvmReferenceAnnotationUnsupportedFile) "llvm error: unsupported feature for --emit-llvm: reference type annotations"
+
+$llvmArrayAnnotationUnsupportedSource = @'
+let count = func(values: array<int>): int {
+  1
+};
+
+0;
+'@
+$llvmArrayAnnotationUnsupportedFile = Join-Path $tmp "llvm_array_annotation_unsupported.ff"
+Write-Utf8NoBom $llvmArrayAnnotationUnsupportedFile $llvmArrayAnnotationUnsupportedSource
+
+Assert-Fails-Contains "llvm array annotation unsupported" @($compiler, "--emit-llvm", $llvmArrayAnnotationUnsupportedFile) "llvm error: unsupported feature for --emit-llvm: array and hash type annotations"
+
+$llvmIndexAssignmentUnsupportedSource = @'
+var values = [1, 2];
+values[0] = 3;
+'@
+$llvmIndexAssignmentUnsupportedFile = Join-Path $tmp "llvm_index_assignment_unsupported.ff"
+Write-Utf8NoBom $llvmIndexAssignmentUnsupportedFile $llvmIndexAssignmentUnsupportedSource
+
+Assert-Fails-Contains "llvm index assignment unsupported" @($compiler, "--emit-llvm", $llvmIndexAssignmentUnsupportedFile) "llvm error: unsupported feature for --emit-llvm: index assignment"
+
 $llvmBuiltinUnsupportedSource = @'
 len("abc");
 '@
@@ -636,6 +831,21 @@ if ($LASTEXITCODE -ne 0) {
 }
 Assert-Equal "llvm builtin boundary eval" $evalLlvmBuiltinUnsupported "3"
 Assert-Fails-Contains "llvm builtin unsupported" @($compiler, "--emit-llvm", $llvmBuiltinUnsupportedFile) "llvm error: unsupported feature for --emit-llvm: builtins"
+
+$llvmNestedFunctionUnsupportedSource = @'
+let outer = func(): int {
+  let inner = func(): int {
+    1
+  };
+  inner()
+};
+
+outer();
+'@
+$llvmNestedFunctionUnsupportedFile = Join-Path $tmp "llvm_nested_function_unsupported.ff"
+Write-Utf8NoBom $llvmNestedFunctionUnsupportedFile $llvmNestedFunctionUnsupportedSource
+
+Assert-Fails-Contains "llvm nested function unsupported" @($compiler, "--emit-llvm", $llvmNestedFunctionUnsupportedFile) "llvm error: nested function literals are not supported by --emit-llvm yet: inner"
 
 Remove-Item -LiteralPath $tmp -Recurse -Force
 Write-Output "LLVM smoke tests passed"

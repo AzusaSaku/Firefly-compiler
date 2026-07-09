@@ -35,6 +35,24 @@ struct FrontendResult {
     }
 };
 
+inline filesystem::path &firefly_executable_path_storage() {
+    static filesystem::path path;
+    return path;
+}
+
+inline void set_firefly_executable_path(const string &path) {
+    firefly_executable_path_storage() = filesystem::absolute(filesystem::path(path));
+}
+
+inline filesystem::path firefly_executable_dir() {
+    auto path = firefly_executable_path_storage();
+    if (path.empty()) {
+        return filesystem::path();
+    }
+    return path.parent_path();
+}
+
+// Frontend pipeline: source text -> AST -> semantic checks.
 inline string read_source_file(const string &path, vector<string> &errors) {
     ifstream in(path);
     if (!in) {
@@ -59,13 +77,20 @@ inline FrontendResult parse_source(const string &source) {
     return result;
 }
 
-inline bool analyze_frontend(Program *program, ostream &err) {
+inline string diagnostic_with_source(const string &msg, const string &source_name) {
+    if (source_name.empty()) {
+        return msg;
+    }
+    return msg + " in " + source_name;
+}
+
+inline bool analyze_frontend(Program *program, ostream &err, const string &source_name = "") {
     SemanticAnalyzer analyzer;
     analyzer.analyze(program);
 
     if (!analyzer.errors.empty()) {
         for (auto &msg : analyzer.errors) {
-            err << "semantic error: " << msg << endl;
+            err << "semantic error: " << diagnostic_with_source(msg, source_name) << endl;
         }
         return false;
     }
@@ -73,6 +98,7 @@ inline bool analyze_frontend(Program *program, ostream &err) {
     return true;
 }
 
+// Host tool discovery and shell command helpers used by native output modes.
 inline string quote_command_path(const filesystem::path &path) {
     filesystem::path normalized = path;
     if (path.is_relative() && (path.has_parent_path() || filesystem::exists(path))) {
@@ -107,8 +133,26 @@ inline filesystem::path llvm_tools_dir() {
 }
 
 inline filesystem::path find_llvm_tool(const string &tool_name) {
-    auto dir = llvm_tools_dir();
-    if (!dir.empty()) {
+    vector<filesystem::path> search_dirs;
+
+    const char *env = getenv("FIREFLY_LLVM_TOOLS_DIR");
+    if (env != nullptr && env[0] != '\0') {
+        search_dirs.emplace_back(env);
+    }
+
+    auto exe_dir = firefly_executable_dir();
+    if (!exe_dir.empty()) {
+        search_dirs.push_back(exe_dir);
+    }
+
+#ifdef FIREFLY_LLVM_TOOLS_DIR
+    search_dirs.emplace_back(FIREFLY_LLVM_TOOLS_DIR);
+#endif
+
+    for (auto &dir : search_dirs) {
+        if (dir.empty()) {
+            continue;
+        }
         auto candidate = dir / tool_name;
         if (filesystem::exists(candidate)) {
             return candidate;
@@ -168,19 +212,21 @@ inline int write_text_file(const filesystem::path &path, const string &content, 
     return 0;
 }
 
+// LLVM/backend boundary: compile Firefly source to IR and materialize native artifacts.
 inline bool compile_source_to_ir(const string &source,
                                  const string &module_name,
                                  string &ir,
-                                 ostream &err) {
+                                 ostream &err,
+                                 const string &source_name = "") {
     auto frontend = parse_source(source);
     if (!frontend.ok()) {
         for (auto &msg : frontend.errors) {
-            err << "parser error: " << msg << endl;
+            err << "parser error: " << diagnostic_with_source(msg, source_name) << endl;
         }
         return false;
     }
 
-    if (!analyze_frontend(frontend.program.get(), err)) {
+    if (!analyze_frontend(frontend.program.get(), err, source_name)) {
         return false;
     }
 
@@ -219,10 +265,11 @@ inline int link_native_executable(const filesystem::path &object_path,
 #ifdef _WIN32
     auto linker = find_llvm_tool("lld-link.exe");
     string command = quote_command_path(linker) +
-                     " /nologo /machine:x64 /entry:main /subsystem:console /nodefaultlib " +
+                     " /nologo /machine:x64 /subsystem:console " +
                      quote_command_path(object_path) +
                      " /out:" +
-                     quote_command_path(exe_path);
+                     quote_command_path(exe_path) +
+                     " /defaultlib:libcmt /defaultlib:oldnames";
     return run_command(command, err);
 #else
     auto linker = find_llvm_tool("clang");
@@ -239,11 +286,16 @@ inline int link_native_executable(const filesystem::path &object_path,
 #endif
 }
 
-inline int run_source(const string &source, DriverMode mode, ostream &out, ostream &err) {
+// Driver entry points used by main.cpp and tests.
+inline int run_source(const string &source,
+                      DriverMode mode,
+                      ostream &out,
+                      ostream &err,
+                      const string &source_name = "") {
     auto frontend = parse_source(source);
     if (!frontend.ok()) {
         for (auto &msg : frontend.errors) {
-            err << "parser error: " << msg << endl;
+            err << "parser error: " << diagnostic_with_source(msg, source_name) << endl;
         }
         return 1;
     }
@@ -253,7 +305,7 @@ inline int run_source(const string &source, DriverMode mode, ostream &out, ostre
         return 0;
     }
 
-    if (!analyze_frontend(frontend.program.get(), err)) {
+    if (!analyze_frontend(frontend.program.get(), err, source_name)) {
         return 1;
     }
 
@@ -300,12 +352,12 @@ inline int run_file(const string &path, DriverMode mode, ostream &out, ostream &
     }
 
     if (mode != DriverMode::EMIT_LLVM && mode != DriverMode::EMIT_OBJ && mode != DriverMode::BUILD_EXE) {
-        return run_source(source, mode, out, err);
+        return run_source(source, mode, out, err, path);
     }
 
     string ir;
     filesystem::path input_path(path);
-    if (!compile_source_to_ir(source, input_path.filename().string(), ir, err)) {
+    if (!compile_source_to_ir(source, input_path.filename().string(), ir, err, path)) {
         return 1;
     }
 

@@ -10,6 +10,7 @@ using namespace std;
 int main(int argc, char *argv[])
 {
     string program_name = argc > 0 ? argv[0] : "firefly";
+    set_firefly_executable_path(program_name);
 
     if (argc == 1) {
         cout << "Hello Firefly!" << endl;

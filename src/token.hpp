@@ -23,6 +23,8 @@ enum class TokenType {
 struct Token {
     string Literal;
     TokenType type;
+    int line{1};
+    int column{1};
 };
 
 // 关键字
@@ -127,6 +129,10 @@ inline string token_type_to_string(TokenType type) {
         default:
             return "UNKNOWN";
     }
+}
+
+inline string token_location_to_string(const Token &token) {
+    return "line " + to_string(token.line) + ", column " + to_string(token.column);
 }
 
 #endif //FIREFLY_COMPILER_TOKEN_H

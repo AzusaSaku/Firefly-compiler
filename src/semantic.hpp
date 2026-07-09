@@ -254,6 +254,19 @@ private:
     vector<map<string, SemanticSymbol>> scopes;
     vector<vector<SemanticBorrowRecord>> borrow_scopes;
     vector<SemanticType> function_returns;
+    vector<Token> diagnostic_locations;
+
+    struct DiagnosticLocationScope {
+        SemanticAnalyzer &analyzer;
+
+        DiagnosticLocationScope(SemanticAnalyzer &analyzer, Token token) : analyzer(analyzer) {
+            analyzer.diagnostic_locations.push_back(std::move(token));
+        }
+
+        ~DiagnosticLocationScope() {
+            analyzer.diagnostic_locations.pop_back();
+        }
+    };
 
     void begin_scope() {
         scopes.emplace_back();
@@ -295,7 +308,77 @@ private:
         return nullptr;
     }
 
+    static Token diagnostic_token(Node *node) {
+        if (node == nullptr) {
+            return Token{};
+        }
+
+        if (auto *stmt = dynamic_cast<VarStatement *>(node)) {
+            return stmt->token;
+        }
+        if (auto *stmt = dynamic_cast<ReturnStatement *>(node)) {
+            return stmt->token;
+        }
+        if (auto *stmt = dynamic_cast<ExpressionStatement *>(node)) {
+            return stmt->token;
+        }
+        if (auto *stmt = dynamic_cast<BlockStatement *>(node)) {
+            return stmt->token;
+        }
+        if (auto *exp = dynamic_cast<Identifier *>(node)) {
+            return exp->token;
+        }
+        if (auto *exp = dynamic_cast<IntegerLiteral *>(node)) {
+            return exp->token;
+        }
+        if (auto *exp = dynamic_cast<StringLiteral *>(node)) {
+            return exp->token;
+        }
+        if (auto *exp = dynamic_cast<Boolean *>(node)) {
+            return exp->token;
+        }
+        if (auto *exp = dynamic_cast<PrefixExpression *>(node)) {
+            return exp->token;
+        }
+        if (auto *exp = dynamic_cast<BorrowExpression *>(node)) {
+            return exp->token;
+        }
+        if (auto *exp = dynamic_cast<InfixExpression *>(node)) {
+            return exp->token;
+        }
+        if (auto *exp = dynamic_cast<IfExpression *>(node)) {
+            return exp->token;
+        }
+        if (auto *exp = dynamic_cast<WhileExpression *>(node)) {
+            return exp->token;
+        }
+        if (auto *exp = dynamic_cast<FunctionLiteral *>(node)) {
+            return exp->token;
+        }
+        if (auto *exp = dynamic_cast<CallExpression *>(node)) {
+            return exp->token;
+        }
+        if (auto *exp = dynamic_cast<ArrayLiteral *>(node)) {
+            return exp->token;
+        }
+        if (auto *exp = dynamic_cast<IndexExpression *>(node)) {
+            return exp->token;
+        }
+        if (auto *exp = dynamic_cast<AssignExpression *>(node)) {
+            return exp->token;
+        }
+        if (auto *exp = dynamic_cast<HashLiteral *>(node)) {
+            return exp->token;
+        }
+
+        return Token{};
+    }
+
     void add_error(const string &msg) {
+        if (!diagnostic_locations.empty()) {
+            errors.push_back(msg + " at " + token_location_to_string(diagnostic_locations.back()));
+            return;
+        }
         errors.push_back(msg);
     }
 
@@ -561,6 +644,8 @@ private:
             return SemanticType::void_type();
         }
 
+        DiagnosticLocationScope diagnostic_scope(*this, diagnostic_token(stmt));
+
         if (auto *var_stmt = dynamic_cast<VarStatement *>(stmt)) {
             return analyze_var_statement(var_stmt);
         }
@@ -647,6 +732,8 @@ private:
         if (exp == nullptr) {
             return SemanticType::void_type();
         }
+
+        DiagnosticLocationScope diagnostic_scope(*this, diagnostic_token(exp));
 
         if (dynamic_cast<IntegerLiteral *>(exp) != nullptr) {
             return SemanticType::int_type();

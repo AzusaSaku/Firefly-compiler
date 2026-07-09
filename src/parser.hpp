@@ -251,7 +251,7 @@ public:
         bool valid_left = dynamic_cast<Identifier *>(&left) != nullptr ||
                           dynamic_cast<IndexExpression *>(&left) != nullptr;
         if (!valid_left) {
-            errors.push_back("invalid assignment target");
+            add_error_at("invalid assignment target", cur_token);
         }
 
         parser_next_token();
@@ -618,7 +618,8 @@ public:
             }
 
             if (!cur_token_is(TokenType::IDENT)) {
-                errors.push_back("expected type annotation after &, got " + token_type_to_string(cur_token.type) + " instead");
+                add_error_at("expected type annotation after &, got " + token_type_to_string(cur_token.type) + " instead",
+                             cur_token);
                 return false;
             }
 
@@ -659,18 +660,22 @@ public:
         }
 
         string msg = "expected next token to be type annotation, got " + token_type_to_string(peek_token.type) + " instead";
-        errors.push_back(msg);
+        add_error_at(msg, peek_token);
         return false;
+    }
+
+    void add_error_at(const string &msg, const Token &token) {
+        errors.push_back(msg + " at " + token_location_to_string(token));
     }
 
     void peek_error(TokenType type) {
         string msg = "expected next token to be " + token_type_to_string(type) + ", got " + token_type_to_string(peek_token.type) + " instead";
-        errors.push_back(msg);
+        add_error_at(msg, peek_token);
     }
 
     void no_prefix_parse_fn_error(TokenType type) {
         string msg = "no prefix parse function for " + token_type_to_string(type) + " found";
-        errors.push_back(msg);
+        add_error_at(msg, cur_token);
     }
 
     bool expect_peek(TokenType type) {

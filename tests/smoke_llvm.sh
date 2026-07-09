@@ -27,6 +27,15 @@ rm -rf "$tmp"
 mkdir -p "$tmp"
 trap 'rm -rf "$tmp"' EXIT
 
+object_ext=".o"
+exe_ext=""
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    object_ext=".obj"
+    exe_ext=".exe"
+    ;;
+esac
+
 assert_equal() {
   local name="$1"
   local actual="$2"
@@ -70,12 +79,62 @@ assert_fails_contains() {
   fi
 }
 
+assert_interpreter_native_marker() {
+  local name="$1"
+  local marker="$2"
+  local file="$tmp/$name.ff"
+  cat > "$file"
+
+  local eval_output
+  eval_output="$("$compiler" --eval "$file")"
+  if ! grep -Fq "$marker" <<<"$eval_output"; then
+    echo "$name eval failed: missing marker '$marker'" >&2
+    exit 1
+  fi
+
+  "$compiler" --build "$file" >/dev/null
+  local exe="$tmp/$name$exe_ext"
+  if [[ ! -f "$exe" ]]; then
+    echo "$name build failed: executable was not created" >&2
+    exit 1
+  fi
+
+  local native_output
+  native_output="$("$exe")"
+  if ! grep -Fq "$marker" <<<"$native_output"; then
+    echo "$name executable failed: missing marker '$marker'" >&2
+    exit 1
+  fi
+}
+
+section() {
+  printf '\n== %s ==\n' "$1"
+}
+
+section "release/package smoke"
 version_output="$("$compiler" --version)"
-if ! grep -Eq "^firefly " <<<"$version_output"; then
+if [[ "$version_output" != "firefly 0.1.0" ]]; then
   echo "version command failed: $version_output" >&2
   exit 1
 fi
 
+help_output="$("$compiler" --help)"
+for pattern in \
+  "--eval <file>" \
+  "--ast <file>" \
+  "--emit-llvm <file>" \
+  "--emit-obj <file>" \
+  "--build <file>" \
+  "--compile <file>" \
+  "--version" \
+  "--help"; do
+  if ! grep -Fq -- "$pattern" <<<"$help_output"; then
+    echo "help command failed: missing '$pattern'" >&2
+    exit 1
+  fi
+done
+
+section "interpreter behavior"
 interpreter_example="$repo_root/examples/interpreter_features.ff"
 interpreter_example_eval="$("$compiler" --eval "$interpreter_example")"
 assert_equal "interpreter example eval" "$interpreter_example_eval" "3"
@@ -84,6 +143,7 @@ llvm_example="$repo_root/examples/llvm_basic.ff"
 llvm_example_eval="$("$compiler" --eval "$llvm_example")"
 assert_equal "LLVM example eval" "$llvm_example_eval" "8"
 
+section "LLVM IR generation"
 llvm_example_tmp="$tmp/example_llvm_basic.ff"
 cp "$llvm_example" "$llvm_example_tmp"
 "$compiler" --emit-llvm "$llvm_example_tmp" >/dev/null
@@ -230,16 +290,17 @@ FF
 borrow_scope_eval="$("$compiler" --eval "$borrow_scope_file")"
 assert_equal "borrow scope eval" "$borrow_scope_eval" "1"
 
+section "native object/executable build"
 "$compiler" --emit-obj "$loop_file" >/dev/null
-loop_object="$tmp/loop_assign.o"
+loop_object="$tmp/loop_assign$object_ext"
 if [[ ! -f "$loop_object" ]]; then
   echo "loop emit-obj failed: object file was not created" >&2
   exit 1
 fi
 
 "$compiler" --build "$loop_file" >/dev/null
-loop_exe="$tmp/loop_assign"
-if [[ ! -x "$loop_exe" ]]; then
+loop_exe="$tmp/loop_assign$exe_ext"
+if [[ ! -f "$loop_exe" ]]; then
   echo "loop build failed: executable was not created" >&2
   exit 1
 fi
@@ -286,6 +347,101 @@ assert_equal "bool eval" "$bool_eval" "1"
 bool_ir="$tmp/bool_assign.ll"
 assert_contains "bool IR" "$bool_ir" "store i1"
 assert_contains "bool IR" "$bool_ir" "nottmp"
+
+print_file="$tmp/print_string.ff"
+cat > "$print_file" <<'FF'
+puts("firefly native");
+0;
+FF
+
+print_eval="$("$compiler" --eval "$print_file")"
+if ! grep -Fq "firefly native" <<<"$print_eval"; then
+  echo "print eval failed: missing output" >&2
+  exit 1
+fi
+
+"$compiler" --emit-llvm "$print_file" >/dev/null
+print_ir="$tmp/print_string.ll"
+assert_contains "print IR declaration" "$print_ir" "declare i32 @puts"
+assert_contains "print IR call" "$print_ir" "call i32 @puts"
+
+"$compiler" --build "$print_file" >/dev/null
+print_exe="$tmp/print_string$exe_ext"
+if [[ ! -f "$print_exe" ]]; then
+  echo "print build failed: executable was not created" >&2
+  exit 1
+fi
+native_print="$("$print_exe")"
+if ! grep -Fq "firefly native" <<<"$native_print"; then
+  echo "print executable failed: missing output" >&2
+  exit 1
+fi
+
+section "interpreter/native consistency"
+assert_interpreter_native_marker "consistency_arithmetic" "consistency arithmetic" <<'FF'
+if (1 + 2 * 3 == 7) {
+  puts("consistency arithmetic")
+} else {
+  puts("bad arithmetic")
+};
+FF
+
+assert_interpreter_native_marker "consistency_if" "consistency if" <<'FF'
+if (true) {
+  puts("consistency if")
+} else {
+  puts("bad if")
+};
+FF
+
+assert_interpreter_native_marker "consistency_while" "consistency while" <<'FF'
+var i = 0;
+var sum = 0;
+
+while (i < 5) {
+  sum = sum + i;
+  i = i + 1;
+};
+
+if (sum == 10) {
+  puts("consistency while")
+} else {
+  puts("bad while")
+};
+FF
+
+assert_interpreter_native_marker "consistency_function" "consistency function" <<'FF'
+let inc = func(n: int): int {
+  n + 1
+};
+
+if (inc(41) == 42) {
+  puts("consistency function")
+} else {
+  puts("bad function")
+};
+FF
+
+assert_interpreter_native_marker "consistency_printing" "consistency printing" <<'FF'
+puts("consistency printing");
+FF
+
+section "parser and semantic errors"
+parser_location_file="$tmp/parser_location.ff"
+cat > "$parser_location_file" <<'FF'
+let = 1;
+FF
+
+assert_fails_contains "parser diagnostic location" "parser error: expected next token to be IDENT, got ASSIGN instead at line 1, column 5" "$compiler" --eval "$parser_location_file"
+
+semantic_location_file="$tmp/semantic_location.ff"
+cat > "$semantic_location_file" <<'FF'
+if (1) {
+  1
+};
+FF
+
+assert_fails_contains "semantic diagnostic location" "semantic error: if condition must be bool, got int at line 1, column 1" "$compiler" --eval "$semantic_location_file"
 
 immutable_file="$tmp/immutable_assign.ff"
 cat > "$immutable_file" <<'FF'
@@ -458,6 +614,7 @@ FF
 
 assert_fails_contains "call move eval" "semantic error: use of moved value: data" "$compiler" --eval "$call_move_file"
 
+section "unsupported LLVM diagnostics"
 llvm_array_unsupported_file="$tmp/llvm_array_unsupported.ff"
 cat > "$llvm_array_unsupported_file" <<'FF'
 let values = [1, 2];
@@ -489,6 +646,36 @@ llvm_borrow_eval="$("$compiler" --eval "$llvm_borrow_unsupported_file")"
 assert_equal "llvm borrow boundary eval" "$llvm_borrow_eval" "firefly"
 assert_fails_contains "llvm borrow unsupported" "llvm error: unsupported feature for --emit-llvm: borrow expressions" "$compiler" --emit-llvm "$llvm_borrow_unsupported_file"
 
+llvm_reference_annotation_unsupported_file="$tmp/llvm_reference_annotation_unsupported.ff"
+cat > "$llvm_reference_annotation_unsupported_file" <<'FF'
+let take = func(value: &string): int {
+  1
+};
+
+0;
+FF
+
+assert_fails_contains "llvm reference annotation unsupported" "llvm error: unsupported feature for --emit-llvm: reference type annotations" "$compiler" --emit-llvm "$llvm_reference_annotation_unsupported_file"
+
+llvm_array_annotation_unsupported_file="$tmp/llvm_array_annotation_unsupported.ff"
+cat > "$llvm_array_annotation_unsupported_file" <<'FF'
+let count = func(values: array<int>): int {
+  1
+};
+
+0;
+FF
+
+assert_fails_contains "llvm array annotation unsupported" "llvm error: unsupported feature for --emit-llvm: array and hash type annotations" "$compiler" --emit-llvm "$llvm_array_annotation_unsupported_file"
+
+llvm_index_assignment_unsupported_file="$tmp/llvm_index_assignment_unsupported.ff"
+cat > "$llvm_index_assignment_unsupported_file" <<'FF'
+var values = [1, 2];
+values[0] = 3;
+FF
+
+assert_fails_contains "llvm index assignment unsupported" "llvm error: unsupported feature for --emit-llvm: index assignment" "$compiler" --emit-llvm "$llvm_index_assignment_unsupported_file"
+
 llvm_builtin_unsupported_file="$tmp/llvm_builtin_unsupported.ff"
 cat > "$llvm_builtin_unsupported_file" <<'FF'
 len("abc");
@@ -497,5 +684,19 @@ FF
 llvm_builtin_eval="$("$compiler" --eval "$llvm_builtin_unsupported_file")"
 assert_equal "llvm builtin boundary eval" "$llvm_builtin_eval" "3"
 assert_fails_contains "llvm builtin unsupported" "llvm error: unsupported feature for --emit-llvm: builtins" "$compiler" --emit-llvm "$llvm_builtin_unsupported_file"
+
+llvm_nested_function_unsupported_file="$tmp/llvm_nested_function_unsupported.ff"
+cat > "$llvm_nested_function_unsupported_file" <<'FF'
+let outer = func(): int {
+  let inner = func(): int {
+    1
+  };
+  inner()
+};
+
+outer();
+FF
+
+assert_fails_contains "llvm nested function unsupported" "llvm error: nested function literals are not supported by --emit-llvm yet: inner" "$compiler" --emit-llvm "$llvm_nested_function_unsupported_file"
 
 echo "LLVM smoke tests passed"

@@ -196,6 +196,10 @@ private:
         return builtin_names.find(name) != builtin_names.end();
     }
 
+    static bool is_supported_builtin_name(const string &name) {
+        return name == "puts";
+    }
+
     void check_type_annotation(const string &annotation) {
         if (annotation.empty()) {
             return;
@@ -254,7 +258,7 @@ private:
         }
 
         if (auto *ident = dynamic_cast<Identifier *>(expression)) {
-            if (is_builtin_name(ident->value)) {
+            if (is_builtin_name(ident->value) && !is_supported_builtin_name(ident->value)) {
                 add_error_once("unsupported feature for --emit-llvm: builtins");
             }
             check_type_annotation(ident->type_annotation);
@@ -310,7 +314,7 @@ private:
 
         if (auto *call = dynamic_cast<CallExpression *>(expression)) {
             if (auto *ident = dynamic_cast<Identifier *>(call->function)) {
-                if (is_builtin_name(ident->value)) {
+                if (is_builtin_name(ident->value) && !is_supported_builtin_name(ident->value)) {
                     add_error_once("unsupported feature for --emit-llvm: builtins");
                 }
             }
@@ -697,6 +701,15 @@ private:
             return FireflyLlvmType::unknown();
         }
 
+        if (ident->value == "puts") {
+            if (args.size() != 1) {
+                errors.push_back("wrong number of arguments for puts: expected 1, got " + std::to_string(args.size()));
+                return FireflyLlvmType::unknown();
+            }
+            require_type(args[0], FireflyLlvmType::string_type(), "argument 1 of puts");
+            return FireflyLlvmType::void_type();
+        }
+
         auto found = functions.find(ident->value);
         if (found == functions.end()) {
             errors.push_back("unknown function for --emit-llvm: " + ident->value);
@@ -898,6 +911,8 @@ private:
     }
 
     void declare_functions() {
+        declare_runtime_functions();
+
         for (auto &entry : functions) {
             auto &info = entry.second;
             vector<llvm::Type *> params;
@@ -916,6 +931,13 @@ private:
             }
             llvm_functions[info.name] = fn;
         }
+    }
+
+    void declare_runtime_functions() {
+        auto *puts_type = llvm::FunctionType::get(llvm::Type::getInt32Ty(*context),
+                                                  {llvm::PointerType::get(*context, 0)},
+                                                  false);
+        module->getOrInsertFunction("puts", puts_type);
     }
 
     void emit_functions() {
@@ -1372,6 +1394,10 @@ private:
             return FireflyLlvmValue{nullptr, FireflyLlvmType::unknown()};
         }
 
+        if (ident->value == "puts") {
+            return emit_puts_call(call);
+        }
+
         auto found = llvm_functions.find(ident->value);
         if (found == llvm_functions.end()) {
             errors.push_back("unknown function for --emit-llvm: " + ident->value);
@@ -1387,6 +1413,22 @@ private:
 
         auto *call_value = builder->CreateCall(found->second, args, "calltmp");
         return FireflyLlvmValue{call_value, *fn_info.type.return_type};
+    }
+
+    FireflyLlvmValue emit_puts_call(CallExpression *call) {
+        if (call->arguments.size() != 1) {
+            errors.push_back("wrong number of arguments for puts: expected 1, got " +
+                             std::to_string(call->arguments.size()));
+            return FireflyLlvmValue{nullptr, FireflyLlvmType::unknown()};
+        }
+
+        auto value = emit_expression(call->arguments[0]);
+        auto callee = module->getOrInsertFunction("puts",
+                                                  llvm::FunctionType::get(llvm::Type::getInt32Ty(*context),
+                                                                          {llvm::PointerType::get(*context, 0)},
+                                                                          false));
+        builder->CreateCall(callee, {cast_value(value, FireflyLlvmType::string_type())});
+        return FireflyLlvmValue{nullptr, FireflyLlvmType::void_type()};
     }
 
     FireflyLlvmValue compare_int(const FireflyLlvmValue &left,
